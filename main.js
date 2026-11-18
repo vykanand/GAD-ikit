@@ -1,7 +1,10 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const XLSX = require('xlsx');
+const execFileAsync = promisify(execFile);
 
 // Main-process debug gate. Set process.env.APP_DEBUG=1 to enable verbose logs.
 const APP_DEBUG = !!process.env.APP_DEBUG;
@@ -68,9 +71,21 @@ async function writeExcelFile(filePath, newData) {
 
     // Combine existing and new data, removing duplicates
     const combinedData = [...newData, ...existingData].filter((item, index, self) =>
-      index === self.findIndex((t) => 
-        t['Time'] === item['Time'] && t['Scanned Code'] === item['Scanned Code']
-      )
+      index === self.findIndex((t) => {
+        try {
+          const keyA = (t['Generated code 1'] || t['Scanned Code'] || '').toString();
+          const keyB = (item['Generated code 1'] || item['Scanned Code'] || '').toString();
+          return t['Time'] === item['Time'] && keyA === keyB;
+        } catch (e) {
+          try {
+            const keyA = (t['Generated code 1'] || t['Scanned Code'] || '').toString();
+            const keyB = (item['Generated code 1'] || item['Scanned Code'] || '').toString();
+            return t['Time'] === item['Time'] && keyA === keyB;
+          } catch (ee) {
+            return t['Time'] === item['Time'] && t['Scanned Code'] === item['Scanned Code'];
+          }
+        }
+      })
     );
 
     // Create and format worksheet
@@ -162,6 +177,248 @@ ipcMain.handle('get-web-server-config', () => {
     return webServerService.getConfig();
   } catch (err) { return { success: false, error: err.message }; }
 });
+
+const defaultPrintTestConfig = {
+  printerName: '',
+  autoFit: false,
+  moduleDots: 4,
+  barHeightPercent: 100,
+  offsetXmm: 0,
+  offsetYmm: 0
+};
+
+function getPrintTestConfigPath() {
+  return path.join(app.getPath('userData'), 'print-test-settings.json');
+}
+
+function readPrintTestConfig() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(getPrintTestConfigPath(), 'utf8'));
+    const config = { ...defaultPrintTestConfig, ...saved };
+    if (saved.mediaFitVersion !== 4) {
+      config.autoFit = false;
+      config.moduleDots = 4;
+    }
+    return config;
+  } catch (error) {
+    if (error.code === 'ENOENT') return { ...defaultPrintTestConfig };
+    throw error;
+  }
+}
+
+ipcMain.handle('get-print-test-config', async (event) => {
+  try {
+    const [config, printers] = await Promise.all([
+      Promise.resolve(readPrintTestConfig()),
+      event.sender.getPrintersAsync()
+    ]);
+    return {
+      success: true,
+      config,
+      printers: printers.map(({ name, isDefault }) => ({ name, isDefault }))
+    };
+  } catch (error) {
+    console.error('Unable to load print test configuration:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+async function getPrinterMedia(printerName, webContents) {
+  if (process.platform !== 'win32') {
+    throw new Error('Active printer media detection is supported only on Windows');
+  }
+  const printers = await webContents.getPrintersAsync();
+  const printer = printerName
+    ? printers.find(item => item.name === printerName)
+    : printers.find(item => item.isDefault);
+  if (!printer) throw new Error(printerName
+    ? 'Selected printer is not currently installed'
+    : 'Windows has no default printer selected');
+
+  const escapedName = printer.name.replace(/'/g, "''");
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    'Add-Type -AssemblyName System.Drawing',
+    `$printerName='${escapedName}'`,
+    '$document=[System.Drawing.Printing.PrintDocument]::new()',
+    '$document.PrinterSettings.PrinterName=$printerName',
+    'if (-not $document.PrinterSettings.IsValid) { throw "Printer is unavailable" }',
+    '$paper=$document.DefaultPageSettings.PaperSize',
+    '$resolution=$document.DefaultPageSettings.PrinterResolution',
+    'if ($paper.Width -le 0 -or $paper.Height -le 0) { throw "Driver did not report a default paper size" }',
+    'if ($resolution.X -le 0 -or $resolution.Y -le 0) { throw "Driver did not report a usable print resolution" }',
+    '[pscustomobject]@{ printerName=$printerName; paperName=$paper.PaperName; widthHundredthInch=$paper.Width; heightHundredthInch=$paper.Height; dpiX=$resolution.X; dpiY=$resolution.Y } | ConvertTo-Json -Compress',
+    '$document.Dispose()'
+  ].join('; ');
+  const { stdout } = await execFileAsync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command', script
+  ], { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 });
+  const media = JSON.parse(stdout.trim());
+  if (!Number.isFinite(media.widthHundredthInch) ||
+      !Number.isFinite(media.heightHundredthInch) ||
+      !Number.isFinite(media.dpiX) || !Number.isFinite(media.dpiY)) {
+    throw new Error('Printer driver returned invalid default media information');
+  }
+  const widthDots = Math.round(media.widthHundredthInch * media.dpiX / 100);
+  const heightDots = Math.round(media.heightHundredthInch * media.dpiY / 100);
+  if (widthDots < 1 || heightDots < 1 || widthDots * heightDots > 40000000) {
+    throw new Error('Printer default media is too large or invalid for safe barcode rendering');
+  }
+  return { ...media, isDefault: printer.isDefault };
+}
+
+ipcMain.handle('get-printer-media', async (event, printerName) => {
+  try {
+    return { success: true, media: await getPrinterMedia(printerName, event.sender) };
+  } catch (error) {
+    console.error('Unable to detect printer media:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('save-print-test-config', async (event, config) => {
+  try {
+    if (!config || typeof config !== 'object') throw new Error('Invalid print configuration');
+    const { printerName, autoFit, moduleDots, barHeightPercent, offsetXmm, offsetYmm } = config;
+    if (typeof printerName !== 'string') throw new Error('Select a printer');
+    if (typeof autoFit !== 'boolean') throw new Error('Automatic fitting must be enabled or disabled');
+    if (!Number.isFinite(moduleDots) || moduleDots < 3 || moduleDots > 5) {
+      throw new Error('Barcode module width must be between 3 and 5 printer dots');
+    }
+    if (!Number.isFinite(barHeightPercent) || barHeightPercent < 50 || barHeightPercent > 100) {
+      throw new Error('Barcode height must be between 50 and 100 percent');
+    }
+    if (!Number.isFinite(offsetXmm) || Math.abs(offsetXmm) > 1.5 ||
+        !Number.isFinite(offsetYmm) || Math.abs(offsetYmm) > 1.5) {
+      throw new Error('Position adjustment must be between -1.5 and 1.5 mm');
+    }
+    if (printerName) {
+      const printers = await event.sender.getPrintersAsync();
+      if (!printers.some(printer => printer.name === printerName)) {
+        throw new Error('Selected printer is not currently installed');
+      }
+    }
+
+    const saved = { printerName, autoFit, moduleDots, barHeightPercent, offsetXmm, offsetYmm };
+    saved.mediaFitVersion = 4;
+    fs.mkdirSync(path.dirname(getPrintTestConfigPath()), { recursive: true });
+    fs.writeFileSync(getPrintTestConfigPath(), JSON.stringify(saved, null, 2), 'utf8');
+    return { success: true, config: saved };
+  } catch (error) {
+    console.error('Unable to save print test configuration:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('open-printer-preferences', async (event, printerName) => {
+  try {
+    if (process.platform !== 'win32') throw new Error('Printer preferences are available only on Windows');
+    if (typeof printerName !== 'string') throw new Error('Invalid printer selection');
+    const media = await getPrinterMedia(printerName, event.sender);
+    await execFileAsync('rundll32.exe', [
+      'printui.dll,PrintUIEntry', '/e', '/n', media.printerName
+    ]);
+    return { success: true };
+  } catch (error) {
+    console.error('Unable to open printer preferences:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+let printQueue = Promise.resolve();
+
+// Keep print jobs sequential so multiple requests cannot overlap printer setup
+// or submit pages out of order.
+ipcMain.handle('print-barcode', (event, data) => {
+  const queuedPrint = printQueue.then(() => printBarcode(data, event.sender));
+  printQueue = queuedPrint.then(() => undefined, () => undefined);
+  return queuedPrint;
+});
+
+// One print request is exactly one label page; the printer's gap sensor advances
+// the stock to the next label between pages.
+async function printBarcode(data, webContents) {
+  try {
+    if (!data || typeof data !== 'object') throw new Error('Invalid barcode print request');
+    const savedConfig = readPrintTestConfig();
+    const { barcode } = data;
+    const printerName = data.printerName ?? savedConfig.printerName;
+    const autoFit = data.autoFit ?? savedConfig.autoFit;
+    const moduleDots = data.moduleDots ?? savedConfig.moduleDots;
+    const barHeightPercent = data.barHeightPercent ?? savedConfig.barHeightPercent;
+    const offsetXmm = data.offsetXmm ?? savedConfig.offsetXmm;
+    const offsetYmm = data.offsetYmm ?? savedConfig.offsetYmm;
+    if (!/^\d{13}$/.test(barcode || '')) throw new Error('Invalid EAN-13 barcode');
+    const digits = [...barcode].map(Number);
+    const checksum = digits.slice(0, 12).reduce(
+      (sum, digit, index) => sum + digit * (index % 2 === 0 ? 1 : 3),
+      0,
+    );
+    if ((10 - (checksum % 10)) % 10 !== digits[12]) {
+      throw new Error('EAN-13 barcode has an invalid check digit');
+    }
+    if (typeof autoFit !== 'boolean' ||
+        typeof printerName !== 'string' ||
+        !Number.isFinite(moduleDots) || moduleDots < 3 || moduleDots > 5 ||
+        !Number.isFinite(barHeightPercent) || barHeightPercent < 50 || barHeightPercent > 100 ||
+        !Number.isFinite(offsetXmm) || Math.abs(offsetXmm) > 1.5 ||
+        !Number.isFinite(offsetYmm) || Math.abs(offsetYmm) > 1.5) {
+      throw new Error('Invalid barcode print settings');
+    }
+    if (process.platform !== 'win32') {
+      throw new Error('Direct barcode printing through the Windows printer driver is supported only on Windows');
+    }
+
+    const media = await getPrinterMedia(printerName, webContents);
+    const expectedMedia = [
+      ['mediaPrinterName', media.printerName],
+      ['mediaWidthHundredthInch', media.widthHundredthInch],
+      ['mediaHeightHundredthInch', media.heightHundredthInch],
+      ['mediaDpiX', media.dpiX],
+      ['mediaDpiY', media.dpiY],
+    ];
+    if (expectedMedia.some(([key]) => data[key] !== undefined) &&
+        expectedMedia.some(([key, expected]) => data[key] !== expected)) {
+      throw new Error('Printer media or resolution changed. Refresh detected settings and try again.');
+    }
+    const scriptPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'scripts', 'tsc-print-calibration.ps1')
+      : path.join(__dirname, 'scripts', 'tsc-print-calibration.ps1');
+    if (!fs.existsSync(scriptPath)) throw new Error('The direct-print middleware script is missing');
+
+    const powershellArgs = [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', scriptPath,
+      '-PrinterName', media.printerName,
+      '-Barcode', barcode,
+      '-ModuleDots', String(moduleDots),
+      '-BarHeightPercent', String(barHeightPercent),
+      '-OffsetXmm', String(offsetXmm),
+      '-OffsetYmm', String(offsetYmm),
+      '-ExpectedWidthHundredthInch', String(media.widthHundredthInch),
+      '-ExpectedHeightHundredthInch', String(media.heightHundredthInch),
+      '-ExpectedDpiX', String(media.dpiX),
+      '-ExpectedDpiY', String(media.dpiY),
+      '-AllowOtherPrinter',
+      '-Print',
+    ];
+    if (autoFit) powershellArgs.push('-AutoFit');
+    const { stdout } = await execFileAsync('powershell.exe', powershellArgs, {
+      windowsHide: true,
+      timeout: 120000,
+      maxBuffer: 1024 * 1024,
+    });
+    console.log('[print] middleware submitted barcode:', barcode, stdout.trim());
+    return { success: true, barcode, message: stdout.trim() };
+
+  } catch (error) {
+    console.error('Print barcode error:', error);
+    const details = error.stderr ? error.stderr.trim() : error.message;
+    return { success: false, error: details };
+  }
+}
 
 // Allow renderer to broadcast session updates (selected row / field info) to connected mobile clients
 ipcMain.handle('broadcast-session-update', async (event, session) => {
@@ -314,8 +571,8 @@ function createWindow() {
     }
   });
 
-  // Load the index.html file
-  mainWindow.loadFile('index.html');
+  // Load the direct barcode printer test page.
+  mainWindow.loadFile('print-test.html');
 
   // Maximize the window
   mainWindow.maximize();
@@ -397,9 +654,4 @@ app.whenReady().then(() => {
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
-});
-
-// Quit when all windows are closed
-app.on('window-all-closed', function () {
-  if (process.platform !== 'darwin') app.quit();
 });

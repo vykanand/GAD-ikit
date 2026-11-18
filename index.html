@@ -7,6 +7,66 @@
       http-equiv="Content-Security-Policy"
       content="script-src 'self' 'unsafe-inline';"
     />
+    <style>
+      @media print {
+        body,
+        html {
+          overflow: visible !important;
+          height: auto !important;
+        }
+        #app-container {
+          background: white !important;
+          color: #000 !important;
+        }
+        .header,
+        .right-section,
+        nav.buttons,
+        #status-section,
+        .modal,
+        audio,
+        #license-modal,
+        #license-invalid-overlay {
+          display: none !important;
+        }
+        .input-section,
+        .main {
+          background: white !important;
+          color: #000 !important;
+        }
+        #input-section,
+        #verification-section,
+        #scan-data-row,
+        #scan-status-row,
+        #part-code-status-row {
+          display: block !important;
+        }
+        #scan-qty-box,
+        #date-box,
+        #time-box {
+          display: none !important;
+        }
+        #pass-status {
+          display: block !important;
+          color: #000 !important;
+          background: #fff !important;
+        }
+        #scan-data-value,
+        #scan-status-value,
+        #part-code-status-value {
+          color: #000 !important;
+          background: #fff !important;
+        }
+        button:not(#btn-print-preview) {
+          display: none !important;
+        }
+        #btn-print-preview {
+          display: block !important;
+          position: absolute;
+          top: 16px;
+          right: 16px;
+        }
+      }
+    </style>
     <title>GAD Ikit Scanning System</title>
     <style>
       *,
@@ -753,7 +813,7 @@
       }
 
       .blink-overlay {
-        position: absolute;
+        position: fixed;
         top: 0;
         left: 0;
         width: 100%;
@@ -762,7 +822,7 @@
         display: none;
         animation: blink 2s 3;
         pointer-events: none;
-        z-index: 10;
+        z-index: 99999;
       }
 
       @keyframes blink {
@@ -798,7 +858,7 @@
         color: white;
       }
       /* When performing master-item selection (PIN flow), suppress scan-failed visuals
-         so fields populated from master do not appear as scan failures. */
+           so fields populated from master do not appear as scan failures. */
       .suppress-scan-fail .scan-failed,
       .suppress-scan-fail .failed {
         background: transparent !important;
@@ -1872,6 +1932,21 @@
         } catch (e) {}
       }
 
+      // Expose to window so scan-manager.js can call these
+      window.renderFailureRecordBox = renderFailureRecordBox;
+      window.hideFailureRecordBox = hideFailureRecordBox;
+      window.getValueFromRow = getValueFromRow;
+      window.findPartDetails = findPartDetails;
+      window.getPrimaryFieldId = getPrimaryFieldId;
+      window.getPrimaryValue = getPrimaryValue;
+      window.saveScanLogRealtime = saveScanLogRealtime;
+      window.saveErrorScanLogRealtime = saveErrorScanLogRealtime;
+      window.showPinVerification = showPinVerification;
+      window.clearFailureHighlights = clearFailureHighlights;
+      // Expose settings object reference so external scripts (scan-manager.js) can access it
+      // This is needed because 'let settings' does not create a window property
+      window.settings = settings;
+
       // Try to clear the failure box if the current selection/scan corresponds to the last failure
       function tryClearFailureBoxForCurrentScan() {
         try {
@@ -2356,7 +2431,13 @@
               logData[displayHeader] || logData["Part Code"] || "";
             const partName = logData["Part Name"] || "";
             const customer = logData["Customer"] || "";
-            const scannedCode = logData["Scanned Code"] || "";
+            const generated1 =
+              logData["Generated code 1"] || logData["Scanned Code"] || "";
+            const generated2 =
+              logData["Generated code 2"] ||
+              logData["Scanned Code"] ||
+              generated1 ||
+              "";
             const scannerInfo = logData["scan-by"] || logData["Scanner"] || "";
             const matchStatus = logData["Status"] || "UNKNOWN";
 
@@ -2365,7 +2446,8 @@
               partCode,
               partName,
               customer,
-              scannedCode,
+              generated1,
+              generated2,
               scannerInfo,
               matchStatus,
               raw: logData,
@@ -2453,10 +2535,15 @@
           }
 
           // Add legacy/common columns (prefer explicit keys on logEntry if present)
-          logToSave["Scanned Code"] =
-            logEntry && logEntry["Scanned Code"] !== undefined
-              ? logEntry["Scanned Code"]
-              : logEntry.scannedCode || "";
+          // Save under new headers: Generated code 1 and Generated code 2 (duplicate)
+          const genVal =
+            (logEntry &&
+              (logEntry["Generated code 1"] || logEntry["Scanned Code"])) ||
+            logEntry.scannedCode ||
+            "";
+          logToSave["Generated code 1"] = genVal;
+          logToSave["Generated code 2"] =
+            (logEntry && logEntry["Generated code 2"]) || genVal;
           logToSave["Scanner"] =
             logEntry && logEntry["Scanner"] !== undefined
               ? logEntry["Scanner"]
@@ -2530,11 +2617,16 @@
             logToSave["scan-by"] = logEntry.scannerInfo || "";
           }
 
-          // Add legacy/common columns (prefer explicit keys on logEntry if present)
-          logToSave["Scanned Code"] =
-            logEntry && logEntry["Scanned Code"] !== undefined
-              ? logEntry["Scanned Code"]
-              : logEntry.scannedCode || "";
+          // Add generated code columns (duplicate value) and legacy/common columns
+          const genValErr =
+            (logEntry &&
+              (logEntry["Generated code 1"] || logEntry["Scanned Code"])) ||
+            logEntry.scannedCode ||
+            "";
+          logToSave["Generated code 1"] = genValErr;
+          logToSave["Generated code 2"] =
+            (logEntry && logEntry["Generated code 2"]) || genValErr;
+
           logToSave["Scanner"] =
             logEntry && logEntry["Scanner"] !== undefined
               ? logEntry["Scanner"]
@@ -2595,8 +2687,18 @@
               log.scannerInfo ||
               "";
 
-            // Legacy/common columns
-            row["Scanned Code"] = log.scannedCode;
+            // Legacy/common columns (use new Generated code headers)
+            row["Generated code 1"] =
+              log.generated1 ||
+              log.scannedCode ||
+              (log.raw && log.raw["Generated code 1"]) ||
+              "";
+            row["Generated code 2"] =
+              log.generated2 ||
+              log.scannedCode ||
+              (log.raw && log.raw["Generated code 2"]) ||
+              row["Generated code 1"] ||
+              "";
             row["Scanner"] = log.scannerInfo;
             row["Status"] = log.matchStatus;
             return row;
@@ -5658,7 +5760,8 @@
               "Time",
               ...configuredHeaders,
               "scan-by",
-              "Scanned Code",
+              "Generated code 1",
+              "Generated code 2",
               "Scanner",
               "Status",
             ];
@@ -5689,8 +5792,10 @@
                     // Prefer raw saved value (from file), fallback to computed fields
                     const raw = log.raw || {};
                     if (raw.hasOwnProperty(col)) return `<td>${raw[col]}</td>`;
-                    if (col === "Scanned Code")
-                      return `<td>${log.scannedCode || ""}</td>`;
+                    if (col === "Generated code 1")
+                      return `<td>${log.generated1 || (log.raw && log.raw["Generated code 1"]) || ""}</td>`;
+                    if (col === "Generated code 2")
+                      return `<td>${log.generated2 || (log.raw && log.raw["Generated code 2"]) || ""}</td>`;
                     if (col === "Scanner")
                       return `<td>${log.scannerInfo || ""}</td>`;
                     if (col === "Status")
@@ -5734,7 +5839,6 @@
           }
           <div class="modal-header">
             <h2 class="modal-title">Today's Scan History</h2>
-            <button id="export-logs">Export</button>
             <button class="close-modal">&times;</button>
           </div>
           <div class="scan-logs">
@@ -5782,68 +5886,7 @@
               }
             });
 
-            // Handle export button - export today's logs
-            const exportBtn = historyModal.querySelector("#export-logs");
-            if (exportBtn) {
-              exportBtn.addEventListener("click", async () => {
-                if (todaysLogs.length === 0) {
-                  showNotification("No logs to export for today", "error");
-                  return;
-                }
-
-                // Prepare today's logs for export using configured fields
-                const logsToExport = todaysLogs.map((log) => {
-                  const row = {};
-                  row["Date"] = log.timestamp.toLocaleDateString("en-GB");
-                  row["Time"] = log.timestamp.toLocaleTimeString("en-GB");
-
-                  (settings.fields || []).forEach((f) => {
-                    const header = f.header || f.label || f.id;
-                    row[header] = (log.raw && log.raw[header]) || "";
-                  });
-
-                  row["scan-by"] =
-                    (log.raw && (log.raw["scan-by"] || log.raw["Scanner"])) ||
-                    log.scannerInfo ||
-                    "";
-                  row["Scanned Code"] = log.scannedCode;
-                  row["Scanner"] = log.scannerInfo;
-                  row["Status"] = log.matchStatus;
-                  return row;
-                });
-
-                // Sort by date and time descending (newest first)
-                logsToExport.sort((a, b) => {
-                  const dateA = new Date(
-                    a["Date"].split("/").reverse().join("-") + " " + a["Time"],
-                  );
-                  const dateB = new Date(
-                    b["Date"].split("/").reverse().join("-") + " " + b["Time"],
-                  );
-                  return dateB - dateA;
-                });
-
-                try {
-                  const result = await ipcRenderer.invoke(
-                    "write-logs",
-                    logsToExport,
-                  );
-                  console.log(
-                    `Successfully exported ${logsToExport.length} today's logs to ${result.filePath}`,
-                  );
-                  showNotification(
-                    `Successfully exported ${logsToExport.length} today's scan logs`,
-                    "info",
-                  );
-                } catch (error) {
-                  console.error("Error exporting today's logs:", error);
-                  showNotification(
-                    "Error exporting logs. Please try again.",
-                    "error",
-                  );
-                }
-              });
-            }
+            // Export button removed; export can be done via the main Export UI
           });
 
         // Initialize data and timestamp after all scripts/resources load
@@ -6115,10 +6158,12 @@
 
     <audio id="error-sound" src="error.mp3" preload="auto"></audio>
 
+    <!-- Full-screen red blink overlay for scan failures (must be outside pin-modal to show independently) -->
+    <div id="blink-overlay" class="blink-overlay"></div>
+
     <!-- PIN Verification Modal -->
     <div id="pin-modal" class="modal" style="z-index: 9999">
       <div class="modal-content" style="max-width: 500px">
-        <div id="blink-overlay" class="blink-overlay"></div>
         <div class="modal-header">
           <h2 class="modal-title">Verification Required</h2>
         </div>
@@ -6586,7 +6631,22 @@
         });
       } catch (e) {}
     </script>
+    <script src="JsBarcode.js"></script>
+    <script src="barcode-generator.js"></script>
+    <script src="barcode-display.js"></script>
     <script src="scan-manager.js"></script>
     <script src="load-master-data.js"></script>
+    <script>
+      // Print Preview Button Handler
+      // document.addEventListener("DOMContentLoaded", function () {
+      //   var printBtn = document.getElementById("btn-print-preview");
+      //   if (printBtn) {
+      //     printBtn.style.display = "inline-block";
+      //     printBtn.addEventListener("click", function () {
+      //       window.print();
+      //     });
+      //   }
+      // });
+    </script>
   </body>
 </html>

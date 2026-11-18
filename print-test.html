@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="script-src 'self' 'unsafe-inline';"
+    />
+    <title>Barcode Print Test</title>
+    <script src="JsBarcode.js"></script>
+    <style>
+      body {
+        font-family: sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        margin: 24px;
+        background: #f0f0f0;
+        gap: 14px;
+      }
+      h2 {
+        margin: 0;
+        color: #333;
+      }
+      #barcode-value {
+        font-size: 22px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        color: #111;
+      }
+      canvas#preview {
+        border: 1px solid #ccc;
+        background: #fff;
+        width: min(696px, 90vw);
+        height: auto;
+        image-rendering: pixelated;
+      }
+      #preview-frame {
+        max-width: 90vw;
+        overflow: auto;
+        background: #ddd;
+      }
+      canvas#preview.native-dots {
+        width: auto;
+        max-width: none;
+      }
+      .buttons {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 12px;
+      }
+      button {
+        padding: 12px 28px;
+        font-size: 15px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      #btn-print {
+        background: #1a7f37;
+        color: #fff;
+      }
+      #btn-new {
+        background: #0066cc;
+        color: #fff;
+      }
+      #btn-apply {
+        background: #5b4b8a;
+        color: #fff;
+      }
+      #btn-save {
+        background: #8a5a00;
+        color: #fff;
+      }
+      #btn-driver {
+        background: #555;
+        color: #fff;
+      }
+      #btn-print:disabled {
+        background: #999;
+        cursor: not-allowed;
+      }
+      .settings {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+        gap: 10px 18px;
+        width: min(680px, 90vw);
+        padding: 14px;
+        background: #fff;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+      }
+      .settings label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 13px;
+      }
+      .settings input,
+      .settings select {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 7px;
+      }
+      .settings input[type="checkbox"] {
+        width: auto;
+        align-self: flex-start;
+      }
+      .settings input[type="range"] {
+        padding: 0;
+      }
+      .settings output {
+        font-weight: 600;
+      }
+      .note {
+        max-width: 680px;
+        margin: 0;
+        color: #444;
+        font-size: 13px;
+        text-align: center;
+      }
+      #status {
+        font-size: 13px;
+        color: #555;
+        min-height: 18px;
+      }
+      @media (max-width: 560px) {
+        .settings {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Barcode Print Test</h2>
+    <div id="barcode-value">—</div>
+    <div id="preview-frame">
+      <canvas id="preview" width="464" height="120" aria-label="Detected printer label preview"></canvas>
+    </div>
+    <button id="btn-preview-scale" type="button" onclick="togglePreviewScale()">Preview: fit screen</button>
+    <p id="media-info" class="note">Detecting selected printer paper size…</p>
+    <div class="settings">
+      <label>
+        Printer
+        <select id="printer-select">
+          <option value="">Windows default printer</option>
+        </select>
+      </label>
+      <label>
+        <span>Fit barcode to available label width <output id="auto-fit-label">Off</output></span>
+        <input id="auto-fit" type="checkbox" />
+      </label>
+      <label>
+        <span>Bar thickness <output id="module-width-value">4.0 printer dots</output></span>
+        <input id="module-dots" type="range" min="3" max="5" step="0.1" value="4" />
+      </label>
+      <label>
+        <span>Barcode height <output id="bar-height-value">100%</output></span>
+        <input id="bar-height" type="range" min="50" max="100" step="1" value="100" />
+      </label>
+      <label>
+        Horizontal adjustment (mm, + right)
+        <input id="offset-x" type="number" min="-1.5" max="1.5" step="0.5" value="0" />
+      </label>
+      <label>
+        Vertical adjustment (mm, + down)
+        <input id="offset-y" type="number" min="-1.5" max="1.5" step="0.5" value="0" />
+      </label>
+    </div>
+    <div class="buttons">
+      <button id="btn-new" onclick="newBarcode()">New Random Barcode</button>
+      <button id="btn-apply" onclick="applyRecommended()">Apply recommended TSC setup</button>
+      <button id="btn-save" onclick="saveSettings()">Save settings</button>
+      <button id="btn-driver" onclick="openDriverSettings()">Open driver preferences</button>
+      <button id="btn-print" onclick="printBarcode()">Print</button>
+    </div>
+    <p class="note">Print uses the same Windows .NET driver path as the calibration script, with the barcode and settings from this page. Preview and print share printer-dot sizing; EAN-13 quiet zones are preserved. Driver gap sensing still requires printer setup.</p>
+    <div id="status"></div>
+
+    <script>
+      const { ipcRenderer } = require("electron");
+
+      let currentBarcode = "";
+      let labelWidthDots = 0;
+      let labelHeightDots = 0;
+      let printers = [];
+      let mediaInfo = null;
+      let mediaRequestId = 0;
+      let renderedFit = null;
+      let nativeDotPreview = false;
+
+      function currentSettings() {
+        return {
+          printerName: document.getElementById("printer-select").value,
+          autoFit: document.getElementById("auto-fit").checked,
+          moduleDots: Number(document.getElementById("module-dots").value),
+          barHeightPercent: Number(document.getElementById("bar-height").value),
+          offsetXmm: Number(document.getElementById("offset-x").value),
+          offsetYmm: Number(document.getElementById("offset-y").value),
+        };
+      }
+
+      function renderLabel(canvas, settings) {
+        if (!mediaInfo || labelWidthDots < 1 || labelHeightDots < 1) {
+          throw new Error("Detect the printer's active paper size before printing.");
+        }
+        const outerMarginDots = Math.max(2, Math.round(mediaInfo.dpiX / 25.4 * 0.25));
+        const leftQuietModules = 11;
+        const rightQuietModules = 7;
+        const totalModules = leftQuietModules + 95 + rightQuietModules;
+        const maxModuleDots = Math.min(
+          5,
+          (labelWidthDots - outerMarginDots * 2) / totalModules,
+        );
+        const moduleDots = settings.autoFit
+          ? maxModuleDots
+          : Math.min(settings.moduleDots, maxModuleDots);
+        if (moduleDots < 3) {
+          throw new Error("Detected paper is too narrow for a reliably scannable EAN-13 barcode.");
+        }
+        const availableHeightDots = labelHeightDots - outerMarginDots * 2;
+        const barHeightDots = Math.max(
+          1,
+          Math.floor(availableHeightDots * settings.barHeightPercent / 100),
+        );
+        if (barHeightDots > availableHeightDots) {
+          throw new Error("Barcode height does not fit the active paper.");
+        }
+
+        const barcodeCanvas = document.createElement("canvas");
+        JsBarcode(barcodeCanvas, currentBarcode, {
+          format: "EAN13",
+          width: 1,
+          height: 1,
+          displayValue: false,
+          margin: 0,
+          lineColor: "#000000",
+          background: "#ffffff",
+        });
+        if (barcodeCanvas.width !== 95) {
+          throw new Error("EAN-13 renderer returned an unexpected module count.");
+        }
+
+        canvas.width = labelWidthDots;
+        canvas.height = labelHeightDots;
+        const context = canvas.getContext("2d");
+        context.imageSmoothingEnabled = false;
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        const blockWidthDots = Math.round(totalModules * moduleDots);
+        const left = Math.round((labelWidthDots - blockWidthDots) / 2 + settings.offsetXmm * mediaInfo.dpiX / 25.4);
+        const top = Math.round((labelHeightDots - barHeightDots) / 2 + settings.offsetYmm * mediaInfo.dpiY / 25.4);
+        if (left < outerMarginDots || top < outerMarginDots ||
+            left + blockWidthDots > labelWidthDots - outerMarginDots ||
+            top + barHeightDots > labelHeightDots - outerMarginDots) {
+          throw new Error("Barcode does not fit on the label with these settings.");
+        }
+        const modulePattern = barcodeCanvas.getContext("2d").getImageData(0, 0, 95, 1);
+        for (let module = 0; module < 95; module += 1) {
+          if (modulePattern.data[module * 4] < 128) {
+            const x1 = left + Math.round((leftQuietModules + module) * moduleDots);
+            const x2 = left + Math.round((leftQuietModules + module + 1) * moduleDots);
+            context.fillStyle = "#000000";
+            context.fillRect(x1, top, Math.max(1, x2 - x1), barHeightDots);
+          }
+        }
+
+        renderedFit = {
+          moduleDots,
+          barHeightDots,
+          barWidthDots: 95 * moduleDots,
+          totalWidthDots: blockWidthDots,
+          outerMarginDots,
+        };
+        document.getElementById("module-width-value").textContent =
+          `${moduleDots.toFixed(2)} dots (${(moduleDots * 25.4 / mediaInfo.dpiX).toFixed(2)} mm)`;
+        document.getElementById("bar-height-value").textContent =
+          `${settings.barHeightPercent}% (${barHeightDots} dots)`;
+        return renderedFit;
+      }
+
+      function refreshPreview() {
+        if (!currentBarcode) return;
+        try {
+          const fit = renderLabel(document.getElementById("preview"), currentSettings());
+          setStatus(`Preview updated: ${fit.barWidthDots.toFixed(1)} dots wide, ${fit.barHeightDots} dots high. Print to test.`);
+        } catch (e) {
+          setStatus("Preview error: " + e.message);
+        }
+      }
+
+      // Generate a valid random EAN-13 (12 random digits + check digit)
+      function randomEAN13() {
+        const digits = Array.from({ length: 12 }, () =>
+          Math.floor(Math.random() * 10),
+        );
+        let sum = 0;
+        digits.forEach((d, i) => {
+          sum += i % 2 === 0 ? d : d * 3;
+        });
+        const check = (10 - (sum % 10)) % 10;
+        return digits.join("") + check;
+      }
+
+      function newBarcode() {
+        currentBarcode = randomEAN13();
+        document.getElementById("barcode-value").textContent = currentBarcode;
+
+        try {
+          renderLabel(document.getElementById("preview"), currentSettings());
+          setStatus("Ready to print: " + currentBarcode);
+        } catch (e) {
+          setStatus("Error rendering barcode: " + e.message);
+        }
+      }
+
+      async function loadSettings() {
+        try {
+          const result = await ipcRenderer.invoke("get-print-test-config");
+          if (!result.success) throw new Error(result.error || "Could not load print settings");
+          printers = result.printers;
+          const printerSelect = document.getElementById("printer-select");
+          printerSelect.replaceChildren(new Option("Windows default printer", ""));
+          printers.forEach((printer) => {
+            const option = new Option(
+              printer.name + (printer.isDefault ? " (Windows default)" : ""),
+              printer.name,
+            );
+            printerSelect.add(option);
+          });
+
+          const config = result.config;
+          if (config.printerName && printers.some((printer) => printer.name === config.printerName)) {
+            printerSelect.value = config.printerName;
+          } else {
+            printerSelect.value = "";
+          }
+          document.getElementById("auto-fit").checked = config.autoFit === true;
+          document.getElementById("module-dots").value = String(config.moduleDots);
+          document.getElementById("module-dots").disabled = config.autoFit === true;
+          document.getElementById("auto-fit-label").textContent = config.autoFit === true ? "On" : "Off";
+          document.getElementById("bar-height").value = String(config.barHeightPercent);
+          document.getElementById("offset-x").value = String(config.offsetXmm);
+          document.getElementById("offset-y").value = String(config.offsetYmm);
+          await detectPrinterMedia();
+          newBarcode();
+          setStatus(`Detected ${mediaInfo.paperName}: ${mediaWidthMm().toFixed(2)} × ${mediaHeightMm().toFixed(2)} mm at ${mediaInfo.dpiX} × ${mediaInfo.dpiY} dpi. Using saved print settings.`);
+        } catch (e) {
+          setStatus("Could not load print settings: " + e.message);
+        }
+      }
+
+      async function applyRecommended() {
+        const selectedPrinter = printers.find((printer) =>
+          printer.name === document.getElementById("printer-select").value);
+        const tscPrinter = printers.find((printer) => /TSC.*244|244.*TSC/i.test(printer.name));
+        if (selectedPrinter || tscPrinter) {
+          document.getElementById("printer-select").value = (selectedPrinter || tscPrinter).name;
+        }
+        document.getElementById("auto-fit").checked = false;
+        document.getElementById("module-dots").disabled = false;
+        document.getElementById("auto-fit-label").textContent = "Off";
+        document.getElementById("module-dots").value = "4";
+        document.getElementById("bar-height").value = "100";
+        document.getElementById("offset-x").value = "0";
+        document.getElementById("offset-y").value = "0";
+        try {
+          await detectPrinterMedia();
+          newBarcode();
+          setStatus("Known-good 4-dot print setup applied for " + mediaInfo.paperName + ". Save settings to keep.");
+        } catch (e) {
+          setStatus("Could not detect selected printer paper: " + e.message);
+        }
+      }
+
+      function mediaWidthMm() {
+        return mediaInfo.widthHundredthInch * 0.254;
+      }
+
+      function mediaHeightMm() {
+        return mediaInfo.heightHundredthInch * 0.254;
+      }
+
+      function togglePreviewScale() {
+        nativeDotPreview = !nativeDotPreview;
+        const preview = document.getElementById("preview");
+        preview.classList.toggle("native-dots", nativeDotPreview);
+        document.getElementById("btn-preview-scale").textContent =
+          nativeDotPreview ? "Preview: 1 screen pixel per printer dot" : "Preview: fit screen";
+      }
+
+      async function detectPrinterMedia() {
+        const requestId = ++mediaRequestId;
+        const result = await ipcRenderer.invoke(
+          "get-printer-media",
+          document.getElementById("printer-select").value,
+        );
+        if (!result.success) throw new Error(result.error || "Could not detect printer paper");
+        if (requestId !== mediaRequestId) return mediaInfo;
+        mediaInfo = result.media;
+        labelWidthDots = Math.round(mediaInfo.widthHundredthInch * mediaInfo.dpiX / 100);
+        labelHeightDots = Math.round(mediaInfo.heightHundredthInch * mediaInfo.dpiY / 100);
+        const outerMarginDots = Math.max(2, Math.round(mediaInfo.dpiX / 25.4 * 0.25));
+        const maxModuleDots = Math.min(5, (labelWidthDots - outerMarginDots * 2) / 113);
+        const selectableMaxModuleDots = Math.floor(maxModuleDots * 10) / 10;
+        document.getElementById("module-dots").max = selectableMaxModuleDots.toFixed(1);
+        if (Number(document.getElementById("module-dots").value) > selectableMaxModuleDots) {
+          document.getElementById("module-dots").value = selectableMaxModuleDots.toFixed(1);
+        }
+        const preview = document.getElementById("preview");
+        preview.width = labelWidthDots;
+        preview.height = labelHeightDots;
+        document.getElementById("media-info").textContent =
+          `${mediaInfo.printerName} · ${mediaInfo.paperName} · ${mediaWidthMm().toFixed(2)} × ${mediaHeightMm().toFixed(2)} mm · ${mediaInfo.dpiX} × ${mediaInfo.dpiY} dpi`;
+        return mediaInfo;
+      }
+
+      async function saveSettings() {
+        try {
+          const result = await ipcRenderer.invoke("save-print-test-config", currentSettings());
+          if (!result.success) throw new Error(result.error || "Could not save settings");
+          setStatus("Settings saved. They will be restored after app restarts.");
+        } catch (e) {
+          setStatus("Could not save settings: " + e.message);
+        }
+      }
+
+      async function openDriverSettings() {
+        try {
+          const result = await ipcRenderer.invoke(
+            "open-printer-preferences",
+            document.getElementById("printer-select").value,
+          );
+          if (!result.success) throw new Error(result.error || "Could not open printer preferences");
+          setStatus("Driver preferences opened. The app detects the active paper and print resolution from this driver.");
+        } catch (e) {
+          setStatus("Could not open driver preferences: " + e.message);
+        }
+      }
+
+      async function printBarcode() {
+        if (isPrinting) return;
+        if (!currentBarcode) {
+          setStatus("Generate a barcode first.");
+          return;
+        }
+
+        isPrinting = true;
+        const btn = document.getElementById("btn-print");
+        btn.disabled = true;
+        setStatus("Sending barcode to the selected printer…");
+
+        try {
+          await detectPrinterMedia();
+          const settings = currentSettings();
+          renderLabel(document.getElementById("preview"), settings);
+
+          const result = await ipcRenderer.invoke("print-barcode", {
+            barcode: currentBarcode,
+            ...settings,
+            mediaPrinterName: mediaInfo.printerName,
+            mediaWidthHundredthInch: mediaInfo.widthHundredthInch,
+            mediaHeightHundredthInch: mediaInfo.heightHundredthInch,
+            mediaDpiX: mediaInfo.dpiX,
+            mediaDpiY: mediaInfo.dpiY,
+          });
+
+          if (result.success) {
+            setStatus(`Print submitted to ${mediaInfo.printerName}: ${result.barcode}. Scan this code to verify the print.`);
+          } else {
+            setStatus("Print failed: " + (result.error || "unknown error"));
+          }
+        } catch (e) {
+          setStatus("Error: " + e.message);
+        } finally {
+          isPrinting = false;
+          btn.disabled = false;
+        }
+      }
+
+      let isPrinting = false;
+
+      function setStatus(msg) {
+        document.getElementById("status").textContent = msg;
+      }
+
+      // Auto-generate one on load
+      document.querySelectorAll(".settings select, .settings input:not([type='range'])").forEach((control) => {
+        control.addEventListener("change", refreshPreview);
+      });
+      document.querySelectorAll(".settings input[type='range']").forEach((control) => {
+        control.addEventListener("input", refreshPreview);
+      });
+      document.getElementById("auto-fit").addEventListener("change", (event) => {
+        document.getElementById("module-dots").disabled = event.target.checked;
+        document.getElementById("auto-fit-label").textContent = event.target.checked ? "On" : "Off";
+        refreshPreview();
+      });
+      document.getElementById("printer-select").addEventListener("change", async () => {
+        try {
+          await detectPrinterMedia();
+          refreshPreview();
+        } catch (e) {
+          mediaInfo = null;
+          setStatus("Could not detect selected printer paper: " + e.message);
+        }
+      });
+      loadSettings();
+    </script>
+  </body>
+</html>

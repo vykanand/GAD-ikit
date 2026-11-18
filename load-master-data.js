@@ -69,6 +69,10 @@ window.loadMasterDataExternal = async function loadMasterDataExternal(forceReloa
 
     console.log("Processed masterData rows:", masterData.length);
 
+    // Expose to window so scan-manager.js can access via window.masterData / window.masterRawRows
+    window.masterData = masterData;
+    window.masterRawRows = masterRawRows;
+
     // Provide detailed debug snapshot for developers to inspect what was loaded
     try {
       globalThis._masterDataDebug = globalThis._masterDataDebug || {};

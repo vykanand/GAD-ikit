@@ -3,5 +3,7 @@
   "AGDKA",
   "OVCMA",
   "ADOSFI",
-  "ATYUI"
+  "ATYUI",
+  "APSO",
+  "ATASI"
 ]

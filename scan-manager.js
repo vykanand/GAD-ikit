@@ -577,7 +577,7 @@
       }
     },
 
-    // Create and show a final-pass modal with a large green proceed button
+    // Create and show a final-pass modal with barcode generation and green proceed button
     _ensureFinalPassModalExists: function () {
       try {
         if (document.getElementById('final-pass-modal')) return;
@@ -593,42 +593,78 @@
         overlay.style.alignItems = 'center';
         overlay.style.justifyContent = 'center';
         overlay.style.background = 'rgba(0,0,0,0.45)';
+        overlay.style.overflowY = 'auto';
 
         const box = document.createElement('div');
-        box.style.maxWidth = '720px';
+        box.style.maxWidth = '800px';
         box.style.width = '90%';
+        box.style.margin = 'auto';
         box.style.padding = '28px';
         box.style.borderRadius = '12px';
         box.style.textAlign = 'center';
         box.style.background = 'linear-gradient(180deg,#003b2f,#006633)';
         box.style.boxShadow = '0 8px 30px rgba(0,0,0,0.6)';
+        box.style.maxHeight = '90vh';
+        box.style.overflowY = 'auto';
 
         const msg = document.createElement('div');
         msg.style.fontSize = '20px';
         msg.style.fontWeight = '700';
         msg.style.color = '#e8f5e9';
         msg.style.marginBottom = '18px';
-        msg.textContent = 'PREVIOUS SCAN WAS FULL PASS (PROCEED)?';
+        msg.textContent = 'SCAN COMPLETE: All Tests Passed!';
 
+        // Barcode container (will be populated on show)
+        const barcodeContainer = document.createElement('div');
+        barcodeContainer.id = 'final-pass-barcode-container';
+        barcodeContainer.style.margin = '20px 0';
+        barcodeContainer.style.height = '120px';
+        barcodeContainer.style.display = 'flex';
+        barcodeContainer.style.alignItems = 'stretch';
+        barcodeContainer.style.justifyContent = 'center';
+        barcodeContainer.style.background = '#ffffff';
+        barcodeContainer.style.borderRadius = '8px';
+        barcodeContainer.style.padding = '8px';
+
+        // Buttons container
+        const buttonsContainer = document.createElement('div');
+        buttonsContainer.style.display = 'flex';
+        buttonsContainer.style.gap = '12px';
+        buttonsContainer.style.justifyContent = 'center';
+        buttonsContainer.style.flexWrap = 'wrap';
+        buttonsContainer.style.marginTop = '20px';
+
+        // (Save button removed — autosave will occur when multi-field pass completes)
+
+        // Proceed button (green)
         const btn = document.createElement('button');
         btn.id = 'final-pass-proceed-btn';
-        btn.textContent = 'PREVIOUS SCAN WAS FULL PASS (PROCEED)';
+        btn.textContent = '✓ PROCEED TO NEXT SCAN';
         btn.style.background = 'linear-gradient(90deg,#00c853,#66bb6a)';
         btn.style.border = 'none';
         btn.style.color = '#022';
-        btn.style.fontSize = '20px';
+        btn.style.fontSize = '16px';
         btn.style.fontWeight = '900';
-        btn.style.padding = '18px 28px';
-        btn.style.borderRadius = '10px';
+        btn.style.padding = '12px 24px';
+        btn.style.borderRadius = '8px';
         btn.style.cursor = 'pointer';
-        btn.style.boxShadow = '0 8px 20px rgba(0,200,83,0.18)';
-
+        btn.style.boxShadow = '0 6px 16px rgba(0,200,83,0.3)';
+        btn.style.transition = 'transform 0.2s ease';
         btn.addEventListener('click', () => {
           try { this._onFinalPassProceed(); } catch (e) { console.error(e); }
         });
+        btn.addEventListener('mouseover', () => {
+          btn.style.transform = 'translateY(-2px)';
+        });
+        btn.addEventListener('mouseout', () => {
+          btn.style.transform = 'translateY(0)';
+        });
+
+        buttonsContainer.appendChild(btn);
 
         box.appendChild(msg);
-        box.appendChild(btn);
+        box.appendChild(barcodeContainer);
+        box.appendChild(buttonsContainer);
         overlay.appendChild(box);
         document.body.appendChild(overlay);
       } catch (e) {
@@ -636,15 +672,170 @@
       }
     },
 
-    _showFinalPassModal: function () {
+    _showFinalPassModal: async function () {
       try {
         this._ensureFinalPassModalExists();
         const modal = document.getElementById('final-pass-modal');
         if (!modal) return;
+        // Always (re)generate/render barcode display so container is populated
+        try { await this._generateAndDisplayBarcode(); } catch (e) { /* non-fatal */ }
         modal.style.display = 'flex';
         const btn = document.getElementById('final-pass-proceed-btn');
         try { if (btn) { if (window.safeFocus) window.safeFocus(btn); else btn.focus && btn.focus(); } } catch (e) {}
       } catch (e) { console.error('scanManager._showFinalPassModal error', e); }
+    },
+
+    _generateAndDisplayBarcode: async function () {
+      try {
+        // Check if BarcodeGenerator is available
+        if (typeof window.BarcodeGenerator === 'undefined') {
+          console.warn('scanManager: BarcodeGenerator not available');
+          return;
+        }
+
+        // Reuse previously-generated barcodes if present to avoid regeneration mismatch
+        let barcodeRecord1 = null;
+        let barcodeRecord2 = null;
+        let alreadyGenerated = false;
+        try {
+          if (this.scanSession && this.scanSession.generatedBarcode1) {
+            barcodeRecord1 = this.scanSession.generatedBarcode1;
+            barcodeRecord2 = this.scanSession.generatedBarcode2 || barcodeRecord1;
+            alreadyGenerated = true;
+          }
+        } catch (e) { /* ignore */ }
+
+        // Generate if not already present
+        if (!alreadyGenerated) {
+          barcodeRecord1 = window.BarcodeGenerator.generateBarcodeRecord(new Date());
+          // Attempt to generate a second unique barcode; bump time slightly until different
+          let attempt = 0;
+          while (attempt < 8) {
+            const t = Date.now() + 15 * (attempt + 1);
+            barcodeRecord2 = window.BarcodeGenerator.generateBarcodeRecord(new Date(t));
+            if (barcodeRecord2 && barcodeRecord1 && barcodeRecord2.barcode !== barcodeRecord1.barcode) break;
+            attempt++;
+          }
+
+          if (!barcodeRecord1) {
+            console.error('scanManager: failed to generate first barcode');
+            return;
+          }
+          if (!barcodeRecord2) {
+            // fallback: if generator couldn't produce a second unique code, derive one by incrementing last digit
+            try {
+              const b = String(barcodeRecord1.barcode || '');
+              const last = Number(b.slice(-1) || '0');
+              const alt = b.slice(0, -1) + String((last + 1) % 10);
+              barcodeRecord2 = Object.assign({}, barcodeRecord1, { barcode: alt, barcodeFormatted: window.BarcodeGenerator.formatBarcode(alt) });
+            } catch (e) {
+              barcodeRecord2 = barcodeRecord1;
+            }
+          }
+
+          // Store barcodes in session for printing/export
+          try { this.scanSession.generatedBarcode1 = barcodeRecord1; } catch (e) {}
+          try { this.scanSession.generatedBarcode2 = barcodeRecord2; } catch (e) {}
+        }
+
+        // Get barcode container
+        const container = document.getElementById('final-pass-barcode-container');
+        if (!container) return;
+        // Display two barcodes + human-readable text
+        if (typeof JsBarcode !== 'undefined') {
+          container.innerHTML = '';
+          const wrapper = document.createElement('div');
+          wrapper.style.display = 'flex';
+          wrapper.style.flexDirection = 'row';
+          wrapper.style.gap = '12px';
+          wrapper.style.alignItems = 'center';
+          wrapper.style.justifyContent = 'center';
+          wrapper.style.width = '100%';
+          wrapper.style.height = '100%';
+
+          const makeBlock = (rec) => {
+            const block = document.createElement('div');
+            block.style.display = 'flex';
+            block.style.flexDirection = 'column';
+            block.style.alignItems = 'center';
+            block.style.justifyContent = 'center';
+            block.style.flex = '1 1 50%';
+            block.style.height = '100%';
+            block.style.background = '#fff';
+            block.style.borderRadius = '6px';
+            block.style.padding = '6px';
+
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.style.width = '100%';
+            svg.style.height = '80%';
+            svg.style.display = 'block';
+            block.appendChild(svg);
+
+            const textEl = document.createElement('div');
+            textEl.style.marginTop = '6px';
+            textEl.style.fontFamily = 'monospace';
+            textEl.style.fontSize = '16px';
+            textEl.style.fontWeight = '700';
+            textEl.style.color = '#022';
+            textEl.textContent = rec.barcodeFormatted || rec.barcode;
+            block.appendChild(textEl);
+
+            // render barcode
+            try {
+              JsBarcode(svg, rec.barcode, {
+                format: 'EAN13',
+                width: 2,
+                height: 60,
+                displayValue: true,
+                fontOptions: 'bold',
+                fontSize: 14,
+                margin: 0,
+                lineColor: '#000000',
+                background: '#ffffff'
+              });
+              svg.setAttribute('width', '100%');
+              svg.setAttribute('height', '100%');
+              svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+            } catch (e) {
+              // ignore rendering errors
+            }
+
+            return block;
+          };
+
+          wrapper.appendChild(makeBlock(barcodeRecord1));
+          wrapper.appendChild(makeBlock(barcodeRecord2));
+          container.appendChild(wrapper);
+          return;
+        }
+
+        // Fallback: show barcode as text only (no metadata)
+        const fallbackHtml = `
+          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%;">
+            <div style="
+              font-family: monospace;
+              font-size: 32px;
+              font-weight: bold;
+              color: #000;
+              letter-spacing: 4px;
+              text-align: center;
+            ">${window.BarcodeGenerator.formatBarcode(barcodeRecord1.barcode)}</div>
+            <div style="
+              font-family: monospace;
+              font-size: 32px;
+              font-weight: bold;
+              color: #000;
+              letter-spacing: 4px;
+              text-align: center;
+              margin-top: 12px;
+            ">${window.BarcodeGenerator.formatBarcode(barcodeRecord2.barcode)}</div>
+          </div>
+        `;
+        container.innerHTML = fallbackHtml;
+
+      } catch (e) {
+        console.error('scanManager._generateAndDisplayBarcode error', e);
+      }
     },
 
     _hideFinalPassModal: function () {
@@ -654,15 +845,106 @@
       } catch (e) { console.error('scanManager._hideFinalPassModal error', e); }
     },
 
+    _onFinalPassPrint: async function () {
+      try {
+        // Get the stored barcode from session (use first generated code)
+        const barcodeRecord = this.scanSession.generatedBarcode1 || this.scanSession.generatedBarcode;
+        if (!barcodeRecord) {
+          console.error('scanManager: no barcode available for printing');
+          return;
+        }
+
+        // Prepare metadata for printing
+        const metadata = {
+          dateTime: barcodeRecord.scanDateTime,
+          scanBy: (window.settings && window.settings.scanBy) || 
+                  (document.getElementById('scan-by') && document.getElementById('scan-by').value) || 
+                  'SYSTEM'
+        };
+
+        // Use BarcodeDisplay to print if available
+        if (typeof window.BarcodeDisplay !== 'undefined' && window.BarcodeDisplay.printBarcode) {
+          await window.BarcodeDisplay.printBarcode(barcodeRecord.barcode, metadata);
+        } else {
+          // Fallback: use browser print for current modal content
+          window.print();
+        }
+
+      } catch (e) {
+        console.error('scanManager._onFinalPassPrint error', e);
+      }
+    },
+
+    _onFinalPassSave: async function () {
+      try {
+        const b1 = this.scanSession.generatedBarcode1;
+        const b2 = this.scanSession.generatedBarcode2 || b1;
+        if (!b1) {
+          console.error('scanManager: no generated barcode to save');
+          return;
+        }
+
+        // Build a log entry compatible with saveScanLogRealtime
+        const logEntry = {};
+        logEntry.timestamp = b1.scanDateTime || new Date();
+        // Primary saved values: two distinct generated codes
+        logEntry['Generated code 1'] = b1.barcode;
+        logEntry['Generated code 2'] = b2.barcode;
+        logEntry['Barcode'] = b1.barcode;
+        logEntry['Barcode Formatted'] = b1.barcodeFormatted || '';
+        logEntry.matchStatus = 'ALL_FIELDS_MATCHED';
+        logEntry.Status = 'SAVED_BARCODE';
+
+        // Include configured fields (try from currentSelectedRow or DOM inputs)
+        try {
+          (window.settings && window.settings.fields || []).forEach((f) => {
+            const header = f.header || f.label || f.id;
+            try {
+              let val = '';
+              if (window.currentSelectedRow && typeof window.getValueFromRow === 'function') {
+                val = window.getValueFromRow(window.currentSelectedRow, f.id) || '';
+              }
+              if (!val) {
+                const el = document.getElementById(f.id);
+                val = el ? el.value || '' : '';
+              }
+              logEntry[header] = val;
+            } catch (e) {
+              logEntry[header] = '';
+            }
+          });
+        } catch (e) {}
+
+        // Call the real-time save helper if available
+        if (typeof window.saveScanLogRealtime === 'function') {
+          try {
+            await window.saveScanLogRealtime(logEntry);
+            console.info && console.info('scanManager: autosave completed', logEntry);
+          } catch (e) {
+            console.error('scanManager: autosave to history failed', e);
+          }
+        } else {
+          console.warn('scanManager: saveScanLogRealtime not available');
+        }
+      } catch (e) {
+        console.error('scanManager._onFinalPassSave error', e);
+      }
+    },
+
     _onFinalPassProceed: function () {
       try {
         // Hide modal
         this._hideFinalPassModal();
+        // Clear any failure record box from previous failed scans
+        try { if (typeof window.hideFailureRecordBox === 'function') window.hideFailureRecordBox(); } catch (e) {}
         // Reset session state for next sequential scan
         this.scanSession.matchedFields = new Set();
         this.scanSession._manualActive = null;
         this.scanSession._scanSequence = [];
         this.scanSession._currentScanRecord = null;
+        // Clear previously generated barcodes so next session generates fresh ones
+        this.scanSession.generatedBarcode1 = null;
+        this.scanSession.generatedBarcode2 = null;
         // Re-init session target to allow next scan to pick up fresh target (if selection changed)
         try { this.startSessionForCurrentPart(); } catch (e) {}
         // Update UI to show ready/pending first field
@@ -933,6 +1215,8 @@
           // If none left, final PASS
           const allPassed = required.length > 0 && required.every((f) => this.scanSession.matchedFields.has(f));
           if (allPassed) {
+            // Clear any failure record box from previous failed scans
+            try { if (typeof window.hideFailureRecordBox === 'function') window.hideFailureRecordBox(); } catch (e) {}
             // Show PASS UI similar to legacy behavior
             try {
               document.getElementById("scan-data-value").textContent = cleanedCode;
@@ -963,24 +1247,15 @@
               // Clear visuals after a short delay for final pass
                 setTimeout(() => { try { this._showReadyState(); } catch(e) {} }, 1000);
 
-              // Final save (optional)
+              // Auto-generate barcodes and save to history
               try {
-                const finalLog = Object.assign({}, logEntry, { matchStatus: 'ALL_FIELDS_MATCHED' });
-                if (typeof window.saveScanLogRealtime === 'function') window.saveScanLogRealtime(finalLog);
-                // Emit consolidated sequence log now that all fields passed
+                try { await this._generateAndDisplayBarcode(); } catch (e) { console.error('generate for autosave failed', e); }
+                try { if (typeof this._onFinalPassSave === 'function') await this._onFinalPassSave(); } catch (e) { console.error('autosave failed', e); }
                 try {
                   console.info && console.info('scanManager: ALL_FIELDS_MATCHED - sequence:', this.scanSession._scanSequence || []);
-                  console.info && console.info('scanManager: finalLog saved', finalLog);
-                  try {
-                    if (typeof window.tryClearFailureBoxForCurrentScan === 'function') {
-                      try { window.tryClearFailureBoxForCurrentScan(); } catch(e) {}
-                    } else if (typeof window.hideFailureRecordBox === 'function') {
-                      try { window.hideFailureRecordBox(); } catch(e) {}
-                    }
-                  } catch (e) {}
                 } catch (e) {}
               } catch (e) {
-                console.error('final save failed', e);
+                console.error('final autosave failed', e);
               }
             } catch (e) {
               console.error('Error showing PASS UI:', e);
@@ -988,7 +1263,7 @@
 
             // Preserve passed highlights briefly, then show proceed modal so operator can continue
             try { this._updatePanelStatus(); } catch (e) {}
-            try { this._showFinalPassModal(); } catch (e) { console.error('failed to show final-pass modal', e); }
+            try { await this._showFinalPassModal(); } catch (e) { console.error('failed to show final-pass modal', e); }
             return;
           }
 
@@ -1165,7 +1440,8 @@
                     // use label as column header in exported logs
                     enriched[label] = mergedMap[label];
                   });
-                  enriched['Scanned Code'] = cleanedCode || (enriched['Scanned Code'] || '');
+                  enriched['Generated code 1'] = cleanedCode || (enriched['Generated code 1'] || '');
+                  enriched['Generated code 2'] = cleanedCode || (enriched['Generated code 2'] || enriched['Generated code 1'] || '');
                   enriched['Status'] = 'NOT_MATCHED';
                   // include excel row index for traceability
                   enriched['excelRowIndex'] = excelRowIndex;

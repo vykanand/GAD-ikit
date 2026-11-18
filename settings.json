@@ -13,24 +13,11 @@
       "headerCol": "B"
     }
   ],
-  "primaryFields": [
-    "field_0",
-    "field_1"
-  ],
+  "primaryFields": ["field_0", "field_1"],
   "scanOperation": "equals",
   "displayField": "field_0",
-  "displayFields": [
-    "field_0",
-    "field_1"
-  ],
+  "displayFields": ["field_0", "field_1"],
   "removedHeaders": [],
   "showMultiScanPanel": true,
-  "groupingFields": [
-    {
-      "id": "field_1",
-      "label": "Part Code",
-      "header": "Part Code",
-      "headerCol": "B"
-    }
-  ]
+  "groupingFields": []
 }

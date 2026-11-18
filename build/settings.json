@@ -2,87 +2,27 @@
   "fields": [
     {
       "id": "field_0",
-      "label": "Wire No.",
-      "header": "Wire No.",
+      "label": "Manual code",
+      "header": "Manual code",
       "headerCol": "A"
     },
     {
       "id": "field_1",
-      "label": "Wire Size",
-      "header": "Wire Size",
+      "label": "Part Code",
+      "header": "Part Code",
       "headerCol": "B"
-    },
-    {
-      "id": "field_3",
-      "label": "WIRE COLOR",
-      "header": "WIRE COLOR",
-      "headerCol": "D"
-    },
-    {
-      "id": "field_4",
-      "label": "CUTTING LENGTH ± 5 MM",
-      "header": "CUTTING LENGTH ± 5 MM",
-      "headerCol": "E"
-    },
-    {
-      "id": "field_6",
-      "label": "TERMINAL SIDE-A",
-      "header": "TERMINAL SIDE-A",
-      "headerCol": "G"
-    },
-    {
-      "id": "field_8",
-      "label": "TERMINAL SIDE-B",
-      "header": "TERMINAL SIDE-B",
-      "headerCol": "I"
-    },
-    {
-      "id": "field_1766386851750",
-      "label": "Part Number",
-      "header": "Part Number",
-      "headerCol": "J"
     }
   ],
   "primaryFields": [
-    "field_1",
-    "field_6",
-    "field_8"
+    "field_0"
   ],
   "scanOperation": "equals",
   "displayField": "field_0",
   "displayFields": [
     "field_0",
-    "field_1",
-    "field_3",
-    "field_4",
-    "field_6",
-    "field_8",
-    "field_1766386851750"
+    "field_1"
   ],
-  "removedHeaders": [
-    {
-      "name": "DESCRIPTION STRANDS(±0.008)mm OD(0.05)mm",
-      "col": "C",
-      "norm": "DESCRIPTION STRANDS(±0.008)mm OD(0.05)mm"
-    },
-    {
-      "name": "STRIPPING ± 0.5 MM",
-      "col": "F",
-      "norm": "STRIPPING ± 0.5 MM"
-    },
-    {
-      "name": "STRIPPING ± 0.5 MM",
-      "col": "H",
-      "norm": "STRIPPING ± 0.5 MM"
-    }
-  ],
+  "removedHeaders": [],
   "showMultiScanPanel": true,
-  "groupingFields": [
-    {
-      "id": "field_1766386851750",
-      "label": "Part Number",
-      "header": "Part Number",
-      "headerCol": "J"
-    }
-  ]
+  "groupingFields": []
 }
