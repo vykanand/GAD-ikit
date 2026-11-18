@@ -50,7 +50,7 @@
         }
 
         const defaultOptions = {
-          format: 'EAN13',
+          format: 'CODE128',
           width: 2,
           height: 100,
           displayValue: true,
@@ -117,7 +117,7 @@
 
         if (libLoaded && typeof JsBarcode !== 'undefined') {
           await this.renderBarcode(barcode, barcodeContainer, {
-            format: 'EAN13',
+            format: 'CODE128',
             width: 2.5,
             height: 100,
             displayValue: true,
@@ -291,7 +291,7 @@
               <script>
                 try {
                   JsBarcode("#barcode", "${barcode}", {
-                    format: "EAN13",
+                    format: "CODE128",
                     width: 2,
                     height: 40,
                     displayValue: false,

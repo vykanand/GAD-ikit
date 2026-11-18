@@ -8,6 +8,7 @@
     />
     <title>Barcode Print Test</title>
     <script src="JsBarcode.js"></script>
+    <script src="code128-encoder.js"></script>
     <style>
       body {
         font-family: sans-serif;
@@ -149,16 +150,36 @@
         </select>
       </label>
       <label>
+        App label width (mm)
+        <input id="media-width" type="number" min="10" max="104" step="0.01" value="58.42" />
+      </label>
+      <label>
+        App label height (mm)
+        <input id="media-height" type="number" min="5" max="300" step="0.01" value="14.986" />
+      </label>
+      <label>
+        <span>White border margin <output id="border-margin-value">0.75 mm</output></span>
+        <input id="border-margin" type="range" min="0.25" max="2" step="0.25" value="0.75" />
+      </label>
+      <label>
         <span>Fit barcode to available label width <output id="auto-fit-label">Off</output></span>
         <input id="auto-fit" type="checkbox" />
       </label>
       <label>
-        <span>Bar thickness <output id="module-width-value">4.0 printer dots</output></span>
-        <input id="module-dots" type="range" min="3" max="5" step="0.1" value="4" />
+        <span>Code 128 bar thickness <output id="module-width-value">3.0 printer dots</output></span>
+        <input id="module-dots" type="range" min="3" max="5" step="0.1" value="3" />
       </label>
       <label>
         <span>Barcode height <output id="bar-height-value">100%</output></span>
         <input id="bar-height" type="range" min="50" max="100" step="1" value="100" />
+      </label>
+      <label>
+        <span>Apply TSC driver darkness <output id="darkness-label">Off</output></span>
+        <input id="apply-darkness" type="checkbox" />
+      </label>
+      <label>
+        <span>Darkness level <output id="darkness-value">9 / 15</output></span>
+        <input id="darkness-level" type="range" min="0" max="15" step="1" value="9" disabled />
       </label>
       <label>
         Horizontal adjustment (mm, + right)
@@ -176,7 +197,7 @@
       <button id="btn-driver" onclick="openDriverSettings()">Open driver preferences</button>
       <button id="btn-print" onclick="printBarcode()">Print</button>
     </div>
-    <p class="note">Print uses the same Windows .NET driver path as the calibration script, with the barcode and settings from this page. Preview and print share printer-dot sizing; EAN-13 quiet zones are preserved. Driver gap sensing still requires printer setup.</p>
+    <p class="note">Prints the same 13-digit numeric value in Code 128 with 10-module quiet zones. Code 128 may fit differently than EAN-13; test scanner compatibility and save only after verifying several scans. White border margin adds edge clearance; physical stock and gap calibration must still match. No barcode can guarantee every scan.</p>
     <div id="status"></div>
 
     <script>
@@ -194,11 +215,16 @@
       function currentSettings() {
         return {
           printerName: document.getElementById("printer-select").value,
+          mediaWidthMm: Number(document.getElementById("media-width").value),
+          mediaHeightMm: Number(document.getElementById("media-height").value),
+          borderMarginMm: Number(document.getElementById("border-margin").value),
           autoFit: document.getElementById("auto-fit").checked,
           moduleDots: Number(document.getElementById("module-dots").value),
           barHeightPercent: Number(document.getElementById("bar-height").value),
           offsetXmm: Number(document.getElementById("offset-x").value),
           offsetYmm: Number(document.getElementById("offset-y").value),
+          applyDarkness: document.getElementById("apply-darkness").checked,
+          darknessLevel: Number(document.getElementById("darkness-level").value),
         };
       }
 
@@ -206,41 +232,29 @@
         if (!mediaInfo || labelWidthDots < 1 || labelHeightDots < 1) {
           throw new Error("Detect the printer's active paper size before printing.");
         }
-        const outerMarginDots = Math.max(2, Math.round(mediaInfo.dpiX / 25.4 * 0.25));
-        const leftQuietModules = 11;
-        const rightQuietModules = 7;
-        const totalModules = leftQuietModules + 95 + rightQuietModules;
+        const outerMarginXDots = Math.max(2, Math.round(mediaInfo.dpiX / 25.4 * settings.borderMarginMm));
+        const outerMarginYDots = Math.max(2, Math.round(mediaInfo.dpiY / 25.4 * settings.borderMarginMm));
+        const leftQuietModules = 10;
+        const rightQuietModules = 10;
+        const modulePattern = window.GadCode128Encoder.encode(currentBarcode);
+        const totalModules = leftQuietModules + modulePattern.length + rightQuietModules;
         const maxModuleDots = Math.min(
           5,
-          (labelWidthDots - outerMarginDots * 2) / totalModules,
+          (labelWidthDots - outerMarginXDots * 2) / totalModules,
         );
         const moduleDots = settings.autoFit
           ? maxModuleDots
           : Math.min(settings.moduleDots, maxModuleDots);
         if (moduleDots < 3) {
-          throw new Error("Detected paper is too narrow for a reliably scannable EAN-13 barcode.");
+          throw new Error("Detected paper is too narrow for a reliably scannable Code 128 barcode.");
         }
-        const availableHeightDots = labelHeightDots - outerMarginDots * 2;
+        const availableHeightDots = labelHeightDots - outerMarginYDots * 2;
         const barHeightDots = Math.max(
           1,
           Math.floor(availableHeightDots * settings.barHeightPercent / 100),
         );
         if (barHeightDots > availableHeightDots) {
           throw new Error("Barcode height does not fit the active paper.");
-        }
-
-        const barcodeCanvas = document.createElement("canvas");
-        JsBarcode(barcodeCanvas, currentBarcode, {
-          format: "EAN13",
-          width: 1,
-          height: 1,
-          displayValue: false,
-          margin: 0,
-          lineColor: "#000000",
-          background: "#ffffff",
-        });
-        if (barcodeCanvas.width !== 95) {
-          throw new Error("EAN-13 renderer returned an unexpected module count.");
         }
 
         canvas.width = labelWidthDots;
@@ -252,14 +266,13 @@
         const blockWidthDots = Math.round(totalModules * moduleDots);
         const left = Math.round((labelWidthDots - blockWidthDots) / 2 + settings.offsetXmm * mediaInfo.dpiX / 25.4);
         const top = Math.round((labelHeightDots - barHeightDots) / 2 + settings.offsetYmm * mediaInfo.dpiY / 25.4);
-        if (left < outerMarginDots || top < outerMarginDots ||
-            left + blockWidthDots > labelWidthDots - outerMarginDots ||
-            top + barHeightDots > labelHeightDots - outerMarginDots) {
+        if (left < outerMarginXDots || top < outerMarginYDots ||
+            left + blockWidthDots > labelWidthDots - outerMarginXDots ||
+            top + barHeightDots > labelHeightDots - outerMarginYDots) {
           throw new Error("Barcode does not fit on the label with these settings.");
         }
-        const modulePattern = barcodeCanvas.getContext("2d").getImageData(0, 0, 95, 1);
-        for (let module = 0; module < 95; module += 1) {
-          if (modulePattern.data[module * 4] < 128) {
+        for (let module = 0; module < modulePattern.length; module += 1) {
+          if (modulePattern[module] === "1") {
             const x1 = left + Math.round((leftQuietModules + module) * moduleDots);
             const x2 = left + Math.round((leftQuietModules + module + 1) * moduleDots);
             context.fillStyle = "#000000";
@@ -270,9 +283,10 @@
         renderedFit = {
           moduleDots,
           barHeightDots,
-          barWidthDots: 95 * moduleDots,
+          barWidthDots: modulePattern.length * moduleDots,
           totalWidthDots: blockWidthDots,
-          outerMarginDots,
+          outerMarginXDots,
+          outerMarginYDots,
         };
         document.getElementById("module-width-value").textContent =
           `${moduleDots.toFixed(2)} dots (${(moduleDots * 25.4 / mediaInfo.dpiX).toFixed(2)} mm)`;
@@ -291,8 +305,8 @@
         }
       }
 
-      // Generate a valid random EAN-13 (12 random digits + check digit)
-      function randomEAN13() {
+      // Keep the existing 13-digit payload and checksum; only its printed symbology changes.
+      function randomNumericBarcode() {
         const digits = Array.from({ length: 12 }, () =>
           Math.floor(Math.random() * 10),
         );
@@ -305,7 +319,7 @@
       }
 
       function newBarcode() {
-        currentBarcode = randomEAN13();
+        currentBarcode = randomNumericBarcode();
         document.getElementById("barcode-value").textContent = currentBarcode;
 
         try {
@@ -338,15 +352,24 @@
             printerSelect.value = "";
           }
           document.getElementById("auto-fit").checked = config.autoFit === true;
+          document.getElementById("media-width").value = String(config.mediaWidthMm);
+          document.getElementById("media-height").value = String(config.mediaHeightMm);
+          document.getElementById("border-margin").value = String(config.borderMarginMm);
+          document.getElementById("border-margin-value").textContent = `${config.borderMarginMm} mm`;
           document.getElementById("module-dots").value = String(config.moduleDots);
           document.getElementById("module-dots").disabled = config.autoFit === true;
           document.getElementById("auto-fit-label").textContent = config.autoFit === true ? "On" : "Off";
           document.getElementById("bar-height").value = String(config.barHeightPercent);
           document.getElementById("offset-x").value = String(config.offsetXmm);
           document.getElementById("offset-y").value = String(config.offsetYmm);
+          document.getElementById("apply-darkness").checked = config.applyDarkness === true;
+          document.getElementById("darkness-level").value = String(config.darknessLevel);
+          document.getElementById("darkness-level").disabled = config.applyDarkness !== true;
+          document.getElementById("darkness-label").textContent = config.applyDarkness === true ? "On" : "Off";
+          document.getElementById("darkness-value").textContent = `${config.darknessLevel} / 15`;
           await detectPrinterMedia();
           newBarcode();
-          setStatus(`Detected ${mediaInfo.paperName}: ${mediaWidthMm().toFixed(2)} × ${mediaHeightMm().toFixed(2)} mm at ${mediaInfo.dpiX} × ${mediaInfo.dpiY} dpi. Using saved print settings.`);
+          setStatus(`Ready: app label ${mediaWidthMm().toFixed(2)} × ${mediaHeightMm().toFixed(2)} mm at ${mediaInfo.dpiX} × ${mediaInfo.dpiY} dpi. Label size is sent per job; save if you change it.`);
         } catch (e) {
           setStatus("Could not load print settings: " + e.message);
         }
@@ -362,7 +385,7 @@
         document.getElementById("auto-fit").checked = false;
         document.getElementById("module-dots").disabled = false;
         document.getElementById("auto-fit-label").textContent = "Off";
-        document.getElementById("module-dots").value = "4";
+        document.getElementById("module-dots").value = "3";
         document.getElementById("bar-height").value = "100";
         document.getElementById("offset-x").value = "0";
         document.getElementById("offset-y").value = "0";
@@ -393,17 +416,21 @@
 
       async function detectPrinterMedia() {
         const requestId = ++mediaRequestId;
+        const settings = currentSettings();
         const result = await ipcRenderer.invoke(
           "get-printer-media",
           document.getElementById("printer-select").value,
+          { widthMm: settings.mediaWidthMm, heightMm: settings.mediaHeightMm },
         );
         if (!result.success) throw new Error(result.error || "Could not detect printer paper");
         if (requestId !== mediaRequestId) return mediaInfo;
         mediaInfo = result.media;
+        document.getElementById("media-width").value = mediaWidthMm().toFixed(2);
+        document.getElementById("media-height").value = mediaHeightMm().toFixed(3);
         labelWidthDots = Math.round(mediaInfo.widthHundredthInch * mediaInfo.dpiX / 100);
         labelHeightDots = Math.round(mediaInfo.heightHundredthInch * mediaInfo.dpiY / 100);
-        const outerMarginDots = Math.max(2, Math.round(mediaInfo.dpiX / 25.4 * 0.25));
-        const maxModuleDots = Math.min(5, (labelWidthDots - outerMarginDots * 2) / 113);
+        const outerMarginDots = Math.max(2, Math.round(mediaInfo.dpiX / 25.4 * currentSettings().borderMarginMm));
+        const maxModuleDots = Math.min(5, (labelWidthDots - outerMarginDots * 2) / 143);
         const selectableMaxModuleDots = Math.floor(maxModuleDots * 10) / 10;
         document.getElementById("module-dots").max = selectableMaxModuleDots.toFixed(1);
         if (Number(document.getElementById("module-dots").value) > selectableMaxModuleDots) {
@@ -412,8 +439,11 @@
         const preview = document.getElementById("preview");
         preview.width = labelWidthDots;
         preview.height = labelHeightDots;
+        const detected = mediaInfo.customMedia
+          ? `Driver default ${mediaInfo.detectedPaperName} (${(mediaInfo.detectedWidthHundredthInch * 0.254).toFixed(2)} × ${(mediaInfo.detectedHeightHundredthInch * 0.254).toFixed(2)} mm); `
+          : "";
         document.getElementById("media-info").textContent =
-          `${mediaInfo.printerName} · ${mediaInfo.paperName} · ${mediaWidthMm().toFixed(2)} × ${mediaHeightMm().toFixed(2)} mm · ${mediaInfo.dpiX} × ${mediaInfo.dpiY} dpi`;
+          `${mediaInfo.printerName} · ${detected}using app label ${mediaWidthMm().toFixed(2)} × ${mediaHeightMm().toFixed(2)} mm · ${mediaInfo.dpiX} × ${mediaInfo.dpiY} dpi`;
         return mediaInfo;
       }
 
@@ -421,7 +451,7 @@
         try {
           const result = await ipcRenderer.invoke("save-print-test-config", currentSettings());
           if (!result.success) throw new Error(result.error || "Could not save settings");
-          setStatus("Settings saved. They will be restored after app restarts.");
+          setStatus("Settings saved. Darkness override changes the Windows TSC driver default for other apps too.");
         } catch (e) {
           setStatus("Could not save settings: " + e.message);
         }
@@ -434,7 +464,7 @@
             document.getElementById("printer-select").value,
           );
           if (!result.success) throw new Error(result.error || "Could not open printer preferences");
-          setStatus("Driver preferences opened. The app detects the active paper and print resolution from this driver.");
+          setStatus("Driver preferences opened. Print resolution and driver default are detected; the app label size is applied separately per job.");
         } catch (e) {
           setStatus("Could not open driver preferences: " + e.message);
         }
@@ -459,6 +489,7 @@
 
           const result = await ipcRenderer.invoke("print-barcode", {
             barcode: currentBarcode,
+            barcodePattern: window.GadCode128Encoder.encode(currentBarcode),
             ...settings,
             mediaPrinterName: mediaInfo.printerName,
             mediaWidthHundredthInch: mediaInfo.widthHundredthInch,
@@ -468,7 +499,10 @@
           });
 
           if (result.success) {
-            setStatus(`Print submitted to ${mediaInfo.printerName}: ${result.barcode}. Scan this code to verify the print.`);
+            const darknessNote = settings.applyDarkness
+              ? ` Driver darkness set to ${settings.darknessLevel}/15.`
+              : "";
+            setStatus(`Print submitted to ${mediaInfo.printerName}: ${result.barcode}.${darknessNote} Scan this code to verify the print.`);
           } else {
             setStatus("Print failed: " + (result.error || "unknown error"));
           }
@@ -497,6 +531,16 @@
         document.getElementById("module-dots").disabled = event.target.checked;
         document.getElementById("auto-fit-label").textContent = event.target.checked ? "On" : "Off";
         refreshPreview();
+      });
+      document.getElementById("apply-darkness").addEventListener("change", (event) => {
+        document.getElementById("darkness-level").disabled = !event.target.checked;
+        document.getElementById("darkness-label").textContent = event.target.checked ? "On" : "Off";
+      });
+      document.getElementById("darkness-level").addEventListener("input", (event) => {
+        document.getElementById("darkness-value").textContent = `${event.target.value} / 15`;
+      });
+      document.getElementById("border-margin").addEventListener("input", (event) => {
+        document.getElementById("border-margin-value").textContent = `${event.target.value} mm`;
       });
       document.getElementById("printer-select").addEventListener("change", async () => {
         try {

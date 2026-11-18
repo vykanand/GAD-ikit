@@ -4,6 +4,7 @@ const fs = require('fs');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const XLSX = require('xlsx');
+const Code128Encoder = require('./code128-encoder');
 const execFileAsync = promisify(execFile);
 
 // Main-process debug gate. Set process.env.APP_DEBUG=1 to enable verbose logs.
@@ -180,11 +181,16 @@ ipcMain.handle('get-web-server-config', () => {
 
 const defaultPrintTestConfig = {
   printerName: '',
+  mediaWidthMm: 58.42,
+  mediaHeightMm: 14.986,
+  borderMarginMm: 0.75,
   autoFit: false,
-  moduleDots: 4,
+  moduleDots: 3,
   barHeightPercent: 100,
   offsetXmm: 0,
-  offsetYmm: 0
+  offsetYmm: 0,
+  applyDarkness: false,
+  darknessLevel: 9
 };
 
 function getPrintTestConfigPath() {
@@ -223,7 +229,7 @@ ipcMain.handle('get-print-test-config', async (event) => {
   }
 });
 
-async function getPrinterMedia(printerName, webContents) {
+async function getPrinterMedia(printerName, webContents, mediaOverride) {
   if (process.platform !== 'win32') {
     throw new Error('Active printer media detection is supported only on Windows');
   }
@@ -259,6 +265,20 @@ async function getPrinterMedia(printerName, webContents) {
       !Number.isFinite(media.dpiX) || !Number.isFinite(media.dpiY)) {
     throw new Error('Printer driver returned invalid default media information');
   }
+  if (mediaOverride !== undefined) {
+    const { widthMm, heightMm } = mediaOverride || {};
+    if (!Number.isFinite(widthMm) || widthMm < 10 || widthMm > 104 ||
+        !Number.isFinite(heightMm) || heightMm < 5 || heightMm > 300) {
+      throw new Error('Custom label size must be 10–104 mm wide and 5–300 mm high');
+    }
+    media.detectedPaperName = media.paperName;
+    media.detectedWidthHundredthInch = media.widthHundredthInch;
+    media.detectedHeightHundredthInch = media.heightHundredthInch;
+    media.widthHundredthInch = Math.round(widthMm / 0.254);
+    media.heightHundredthInch = Math.round(heightMm / 0.254);
+    media.paperName = 'App custom label';
+    media.customMedia = true;
+  }
   const widthDots = Math.round(media.widthHundredthInch * media.dpiX / 100);
   const heightDots = Math.round(media.heightHundredthInch * media.dpiY / 100);
   if (widthDots < 1 || heightDots < 1 || widthDots * heightDots > 40000000) {
@@ -267,9 +287,17 @@ async function getPrinterMedia(printerName, webContents) {
   return { ...media, isDefault: printer.isDefault };
 }
 
-ipcMain.handle('get-printer-media', async (event, printerName) => {
+ipcMain.handle('get-printer-media', async (event, printerName, mediaSettings) => {
   try {
-    return { success: true, media: await getPrinterMedia(printerName, event.sender) };
+    const config = readPrintTestConfig();
+    const mediaOverride = mediaSettings || {
+      widthMm: config.mediaWidthMm,
+      heightMm: config.mediaHeightMm
+    };
+    return {
+      success: true,
+      media: await getPrinterMedia(printerName, event.sender, mediaOverride)
+    };
   } catch (error) {
     console.error('Unable to detect printer media:', error);
     return { success: false, error: error.message };
@@ -279,8 +307,18 @@ ipcMain.handle('get-printer-media', async (event, printerName) => {
 ipcMain.handle('save-print-test-config', async (event, config) => {
   try {
     if (!config || typeof config !== 'object') throw new Error('Invalid print configuration');
-    const { printerName, autoFit, moduleDots, barHeightPercent, offsetXmm, offsetYmm } = config;
+    const {
+      printerName, mediaWidthMm, mediaHeightMm, borderMarginMm, autoFit, moduleDots, barHeightPercent, offsetXmm, offsetYmm,
+      applyDarkness, darknessLevel
+    } = config;
     if (typeof printerName !== 'string') throw new Error('Select a printer');
+    if (!Number.isFinite(mediaWidthMm) || mediaWidthMm < 10 || mediaWidthMm > 104 ||
+        !Number.isFinite(mediaHeightMm) || mediaHeightMm < 5 || mediaHeightMm > 300) {
+      throw new Error('Custom label size must be 10–104 mm wide and 5–300 mm high');
+    }
+    if (!Number.isFinite(borderMarginMm) || borderMarginMm < 0.25 || borderMarginMm > 2) {
+      throw new Error('Barcode border margin must be between 0.25 and 2 mm');
+    }
     if (typeof autoFit !== 'boolean') throw new Error('Automatic fitting must be enabled or disabled');
     if (!Number.isFinite(moduleDots) || moduleDots < 3 || moduleDots > 5) {
       throw new Error('Barcode module width must be between 3 and 5 printer dots');
@@ -292,6 +330,10 @@ ipcMain.handle('save-print-test-config', async (event, config) => {
         !Number.isFinite(offsetYmm) || Math.abs(offsetYmm) > 1.5) {
       throw new Error('Position adjustment must be between -1.5 and 1.5 mm');
     }
+    if (typeof applyDarkness !== 'boolean' ||
+        !Number.isInteger(darknessLevel) || darknessLevel < 0 || darknessLevel > 15) {
+      throw new Error('Darkness override must be disabled or a level from 0 to 15');
+    }
     if (printerName) {
       const printers = await event.sender.getPrintersAsync();
       if (!printers.some(printer => printer.name === printerName)) {
@@ -299,7 +341,10 @@ ipcMain.handle('save-print-test-config', async (event, config) => {
       }
     }
 
-    const saved = { printerName, autoFit, moduleDots, barHeightPercent, offsetXmm, offsetYmm };
+    const saved = {
+      printerName, mediaWidthMm, mediaHeightMm, borderMarginMm, autoFit, moduleDots, barHeightPercent, offsetXmm, offsetYmm,
+      applyDarkness, darknessLevel
+    };
     saved.mediaFitVersion = 4;
     fs.mkdirSync(path.dirname(getPrintTestConfigPath()), { recursive: true });
     fs.writeFileSync(getPrintTestConfigPath(), JSON.stringify(saved, null, 2), 'utf8');
@@ -343,22 +388,28 @@ async function printBarcode(data, webContents) {
     const savedConfig = readPrintTestConfig();
     const { barcode } = data;
     const printerName = data.printerName ?? savedConfig.printerName;
+    const mediaWidthMm = data.mediaWidthMm ?? savedConfig.mediaWidthMm;
+    const mediaHeightMm = data.mediaHeightMm ?? savedConfig.mediaHeightMm;
+    const borderMarginMm = data.borderMarginMm ?? savedConfig.borderMarginMm;
     const autoFit = data.autoFit ?? savedConfig.autoFit;
     const moduleDots = data.moduleDots ?? savedConfig.moduleDots;
     const barHeightPercent = data.barHeightPercent ?? savedConfig.barHeightPercent;
     const offsetXmm = data.offsetXmm ?? savedConfig.offsetXmm;
     const offsetYmm = data.offsetYmm ?? savedConfig.offsetYmm;
-    if (!/^\d{13}$/.test(barcode || '')) throw new Error('Invalid EAN-13 barcode');
-    const digits = [...barcode].map(Number);
-    const checksum = digits.slice(0, 12).reduce(
-      (sum, digit, index) => sum + digit * (index % 2 === 0 ? 1 : 3),
-      0,
-    );
-    if ((10 - (checksum % 10)) % 10 !== digits[12]) {
-      throw new Error('EAN-13 barcode has an invalid check digit');
+    const applyDarkness = data.applyDarkness ?? savedConfig.applyDarkness;
+    const darknessLevel = data.darknessLevel ?? savedConfig.darknessLevel;
+    if (!/^\d{13}$/.test(barcode || '')) throw new Error('Invalid 13-digit numeric barcode');
+    if (!Code128Encoder.isValidPayload(barcode)) {
+      throw new Error('Barcode payload has an invalid check digit');
     }
+    const barcodePattern = Code128Encoder.encode(barcode);
     if (typeof autoFit !== 'boolean' ||
         typeof printerName !== 'string' ||
+        !Number.isFinite(mediaWidthMm) || mediaWidthMm < 10 || mediaWidthMm > 104 ||
+        !Number.isFinite(mediaHeightMm) || mediaHeightMm < 5 || mediaHeightMm > 300 ||
+        !Number.isFinite(borderMarginMm) || borderMarginMm < 0.25 || borderMarginMm > 2 ||
+        typeof applyDarkness !== 'boolean' ||
+        !Number.isInteger(darknessLevel) || darknessLevel < 0 || darknessLevel > 15 ||
         !Number.isFinite(moduleDots) || moduleDots < 3 || moduleDots > 5 ||
         !Number.isFinite(barHeightPercent) || barHeightPercent < 50 || barHeightPercent > 100 ||
         !Number.isFinite(offsetXmm) || Math.abs(offsetXmm) > 1.5 ||
@@ -369,7 +420,10 @@ async function printBarcode(data, webContents) {
       throw new Error('Direct barcode printing through the Windows printer driver is supported only on Windows');
     }
 
-    const media = await getPrinterMedia(printerName, webContents);
+    const media = await getPrinterMedia(printerName, webContents, {
+      widthMm: mediaWidthMm,
+      heightMm: mediaHeightMm
+    });
     const expectedMedia = [
       ['mediaPrinterName', media.printerName],
       ['mediaWidthHundredthInch', media.widthHundredthInch],
@@ -393,18 +447,23 @@ async function printBarcode(data, webContents) {
       '-File', scriptPath,
       '-PrinterName', media.printerName,
       '-Barcode', barcode,
+      '-BarcodePattern', barcodePattern,
       '-ModuleDots', String(moduleDots),
+      '-BorderMarginMm', String(borderMarginMm),
       '-BarHeightPercent', String(barHeightPercent),
       '-OffsetXmm', String(offsetXmm),
       '-OffsetYmm', String(offsetYmm),
       '-ExpectedWidthHundredthInch', String(media.widthHundredthInch),
       '-ExpectedHeightHundredthInch', String(media.heightHundredthInch),
+      '-LabelWidthHundredthInch', String(media.widthHundredthInch),
+      '-LabelHeightHundredthInch', String(media.heightHundredthInch),
       '-ExpectedDpiX', String(media.dpiX),
       '-ExpectedDpiY', String(media.dpiY),
       '-AllowOtherPrinter',
       '-Print',
     ];
     if (autoFit) powershellArgs.push('-AutoFit');
+    if (applyDarkness) powershellArgs.push('-DarknessLevel', String(darknessLevel));
     const { stdout } = await execFileAsync('powershell.exe', powershellArgs, {
       windowsHide: true,
       timeout: 120000,

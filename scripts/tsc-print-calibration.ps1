@@ -2,8 +2,11 @@
 param(
   [string]$PrinterName,
   [string]$Barcode,
+  [string]$BarcodePattern,
   [ValidateRange(3.0, 5.0)]
-  [double]$ModuleDots = 4.0,
+  [double]$ModuleDots = 3.0,
+  [ValidateRange(0.25, 2.0)]
+  [double]$BorderMarginMm = 0.75,
   [ValidateRange(50, 100)]
   [int]$BarHeightPercent = 100,
   [ValidateRange(-1.5, 1.5)]
@@ -13,8 +16,11 @@ param(
   [switch]$AutoFit,
   [int]$ExpectedWidthHundredthInch,
   [int]$ExpectedHeightHundredthInch,
+  [int]$LabelWidthHundredthInch,
+  [int]$LabelHeightHundredthInch,
   [int]$ExpectedDpiX,
   [int]$ExpectedDpiY,
+  [int]$DarknessLevel = -1,
   [switch]$AllowOtherPrinter,
   [string]$ConfigPath = (Join-Path $env:APPDATA 'gad-qr-scanner\print-test-settings.json'),
   [switch]$Inspect,
@@ -32,60 +38,115 @@ if ($actionCount -ne 1) {
 
 Add-Type -AssemblyName System.Drawing
 
-function Get-ValidEan13 {
+function Get-ValidPayload {
   $digits = -join (1..12 | ForEach-Object { Get-Random -Minimum 0 -Maximum 10 })
   $sum = 0
-  for ($index = 0; $index -lt 12; $index++) {
+  $multiplyByThree = $true
+  for ($index = 11; $index -ge 0; $index--) {
     $digit = [int]::Parse($digits[$index].ToString())
-    $sum += if (($index % 2) -eq 0) { $digit } else { $digit * 3 }
+    if ($multiplyByThree) { $digit *= 3 }
+    $sum += $digit
+    $multiplyByThree = -not $multiplyByThree
   }
   $checkDigit = (10 - ($sum % 10)) % 10
   return "$digits$checkDigit"
 }
 
-function Test-Ean13Checksum([string]$Code) {
+function Test-PayloadCheckDigit([string]$Code) {
   if ($Code -notmatch '^\d{13}$') { return $false }
   $sum = 0
-  for ($index = 0; $index -lt 12; $index++) {
+  $multiplyByThree = $true
+  for ($index = 11; $index -ge 0; $index--) {
     $digit = [int]::Parse($Code[$index].ToString())
-    $sum += if (($index % 2) -eq 0) { $digit } else { $digit * 3 }
+    if ($multiplyByThree) { $digit *= 3 }
+    $sum += $digit
+    $multiplyByThree = -not $multiplyByThree
   }
   return ((10 - ($sum % 10)) % 10) -eq [int]::Parse($Code[12].ToString())
 }
 
-function Get-Ean13Pattern([string]$Code) {
-  $leftOdd = @(
-    '0001101', '0011001', '0010011', '0111101', '0100011',
-    '0110001', '0101111', '0111011', '0110111', '0001011'
+function Get-Code128Pattern([string]$Code) {
+  $patterns = @(
+    '11011001100', '11001101100', '11001100110', '10010011000', '10010001100',
+    '10001001100', '10011001000', '10011000100', '10001100100', '11001001000',
+    '11001000100', '11000100100', '10110011100', '10011011100', '10011001110',
+    '10111001100', '10011101100', '10011100110', '11001110010', '11001011100',
+    '11001001110', '11011100100', '11001110100', '11101101110', '11101001100',
+    '11100101100', '11100100110', '11101100100', '11100110100', '11100110010',
+    '11011011000', '11011000110', '11000110110', '10100011000', '10001011000',
+    '10001000110', '10110001000', '10001101000', '10001100010', '11010001000',
+    '11000101000', '11000100010', '10110111000', '10110001110', '10001101110',
+    '10111011000', '10111000110', '10001110110', '11101110110', '11010001110',
+    '11000101110', '11011101000', '11011100010', '11011101110', '11101011000',
+    '11101000110', '11100010110', '11101101000', '11101100010', '11100011010',
+    '11101111010', '11001000010', '11110001010', '10100110000', '10100001100',
+    '10010110000', '10010000110', '10000101100', '10000100110', '10110010000',
+    '10110000100', '10011010000', '10011000010', '10000110100', '10000110010',
+    '11000010010', '11001010000', '11110111010', '11000010100', '10001111010',
+    '10100111100', '10010111100', '10010011110', '10111100100', '10011110100',
+    '10011110010', '11110100100', '11110010100', '11110010010', '11011011110',
+    '11011110110', '11110110110', '10101111000', '10100011110', '10001011110',
+    '10111101000', '10111100010', '11110101000', '11110100010', '10111011110',
+    '10111101110', '11101011110', '11110101110', '11010000100', '11010010000',
+    '11010011100', '1100011101011'
   )
-  $leftEven = @(
-    '0100111', '0110011', '0011011', '0100001', '0011101',
-    '0111001', '0000101', '0010001', '0001001', '0010111'
-  )
-  $right = @(
-    '1110010', '1100110', '1101100', '1000010', '1011100',
-    '1001110', '1010000', '1000100', '1001000', '1110100'
-  )
-  $parityByFirstDigit = @(
-    'LLLLLL', 'LLGLGG', 'LLGGLG', 'LLGGGL', 'LGLLGG',
-    'LGGLLG', 'LGGGLL', 'LGLGLG', 'LGLGGL', 'LGGLGL'
-  )
+  if (-not (Test-PayloadCheckDigit $Code)) { throw 'Barcode must be a valid 13-digit numeric code with a correct check digit.' }
 
-  if (-not (Test-Ean13Checksum $Code)) { throw 'Barcode must be a valid EAN-13 code with a correct check digit.' }
+  $codewords = [System.Collections.Generic.List[int]]::new()
+  $codewords.Add(104)
+  $codewords.Add([int]::Parse($Code[0].ToString()) + 16)
+  $codewords.Add(99)
+  for ($index = 1; $index -lt $Code.Length; $index += 2) {
+    $codewords.Add([int]::Parse($Code.Substring($index, 2)))
+  }
+  $checksum = $codewords[0]
+  for ($index = 1; $index -lt $codewords.Count; $index++) {
+    $checksum += $codewords[$index] * $index
+  }
+  $checksum %= 103
+  $pattern = ''
+  foreach ($codeword in $codewords) { $pattern += $patterns[$codeword] }
+  return $pattern + $patterns[$checksum] + $patterns[106]
+}
 
-  $pattern = '101'
-  $parity = $parityByFirstDigit[[int]::Parse($Code[0].ToString())]
-  for ($index = 1; $index -le 6; $index++) {
-    $digit = [int]::Parse($Code[$index].ToString())
-    $pattern += if ($parity[$index - 1] -eq 'L') { $leftOdd[$digit] } else { $leftEven[$digit] }
+function Set-TscDarkness([string]$Name, [int]$Level) {
+  if ($Level -lt 0 -or $Level -gt 15) {
+    throw 'TSC darkness must be between 0 and 15.'
   }
-  $pattern += '01010'
-  for ($index = 7; $index -le 12; $index++) {
-    $pattern += $right[[int]::Parse($Code[$index].ToString())]
+  $configuration = Get-PrintConfiguration -PrinterName $Name -ErrorAction Stop
+  if (-not $configuration.PrintTicketXML) {
+    throw 'The printer driver did not provide a PrintTicket for darkness configuration.'
   }
-  $pattern += '101'
-  if ($pattern.Length -ne 95) { throw 'EAN-13 pattern length is invalid.' }
-  return $pattern
+  [xml]$ticket = $configuration.PrintTicketXML
+  $darknessValue = $ticket.SelectSingleNode(
+    "//*[local-name()='ParameterInit' and @name='seagull.driver.printer.tsc:JobDarknessLevel']/*[local-name()='Value']"
+  )
+  if (-not $darknessValue) {
+    throw 'The selected printer driver does not expose a TSC darkness setting.'
+  }
+  $useCurrentOption = $ticket.SelectSingleNode(
+    "//*[local-name()='Feature' and @name='seagull.driver.printer.tsc:JobUseCurrentPrinterSettings']/*[local-name()='Option']"
+  )
+  if ($useCurrentOption) {
+    $useCurrentOption.SetAttribute('name', 'seagull.driver.printer.tsc:OptNo')
+  }
+  $commonDarknessValue = $ticket.SelectSingleNode(
+    "//*[local-name()='Feature' and @name='seagull.driver.base:JobCommonValueDefinitions']/*[local-name()='Option']/*[local-name()='ScoredProperty' and @name='seagull.driver.base:Ptxcn_PrintDarkness']/*[local-name()='Value']"
+  )
+  $darknessValue.InnerText = [string]$Level
+  if ($commonDarknessValue) {
+    $commonDarknessValue.InnerText = "$([int][Math]::Round($Level * 100.0 / 15, [MidpointRounding]::AwayFromZero)) pct"
+  }
+
+  Set-PrintConfiguration -PrinterName $Name -PrintTicketXml $ticket.OuterXml -ErrorAction Stop | Out-Null
+  $verified = Get-PrintConfiguration -PrinterName $Name -ErrorAction Stop
+  [xml]$verifiedTicket = $verified.PrintTicketXML
+  $verifiedValue = $verifiedTicket.SelectSingleNode(
+    "//*[local-name()='ParameterInit' and @name='seagull.driver.printer.tsc:JobDarknessLevel']/*[local-name()='Value']"
+  )
+  if (-not $verifiedValue -or [int]$verifiedValue.InnerText -ne $Level) {
+    throw 'Windows printer driver did not retain the requested darkness setting.'
+  }
 }
 
 $installedPrinters = @([System.Drawing.Printing.PrinterSettings]::InstalledPrinters)
@@ -104,9 +165,29 @@ if (-not $AllowOtherPrinter -and $PrinterName -notmatch '(?i)(TSC.*244|244.*TSC)
 $document = [System.Drawing.Printing.PrintDocument]::new()
 $document.PrinterSettings.PrinterName = $PrinterName
 if (-not $document.PrinterSettings.IsValid) { throw "Printer is unavailable: $PrinterName" }
+if (($LabelWidthHundredthInch -gt 0) -or ($LabelHeightHundredthInch -gt 0)) {
+  if ($LabelWidthHundredthInch -lt 39 -or $LabelWidthHundredthInch -gt 410 -or
+      $LabelHeightHundredthInch -lt 20 -or $LabelHeightHundredthInch -gt 1181) {
+    throw 'Custom label size is outside the supported range.'
+  }
+  try {
+    $document.DefaultPageSettings.PaperSize = [System.Drawing.Printing.PaperSize]::new(
+      'App custom label',
+      $LabelWidthHundredthInch,
+      $LabelHeightHundredthInch
+    )
+  }
+  catch {
+    throw "Printer driver rejected the app's custom label size: $($_.Exception.Message)"
+  }
+}
 $paper = $document.DefaultPageSettings.PaperSize
 $resolution = $document.DefaultPageSettings.PrinterResolution
 if ($paper.Width -le 0 -or $paper.Height -le 0) { throw 'Driver did not report a valid default label size.' }
+if (($LabelWidthHundredthInch -gt 0 -and $paper.Width -ne $LabelWidthHundredthInch) -or
+    ($LabelHeightHundredthInch -gt 0 -and $paper.Height -ne $LabelHeightHundredthInch)) {
+  throw 'Printer driver did not retain the app custom label size for this job.'
+}
 if ($resolution.X -le 0 -or $resolution.Y -le 0) { throw 'Driver did not report a valid print resolution.' }
 if (($ExpectedWidthHundredthInch -gt 0 -and $paper.Width -ne $ExpectedWidthHundredthInch) -or
     ($ExpectedHeightHundredthInch -gt 0 -and $paper.Height -ne $ExpectedHeightHundredthInch) -or
@@ -117,37 +198,49 @@ if (($ExpectedWidthHundredthInch -gt 0 -and $paper.Width -ne $ExpectedWidthHundr
 
 $widthDots = [int][Math]::Round($paper.Width * $resolution.X / 100, [MidpointRounding]::AwayFromZero)
 $heightDots = [int][Math]::Round($paper.Height * $resolution.Y / 100, [MidpointRounding]::AwayFromZero)
-$outerMarginDots = [Math]::Max(2, [int][Math]::Round($resolution.X / 25.4 * 0.25, [MidpointRounding]::AwayFromZero))
-$maxModuleDots = [Math]::Min(5.0, ($widthDots - 2 * $outerMarginDots) / 113.0)
+$outerMarginXDots = [Math]::Max(2, [int][Math]::Round($resolution.X / 25.4 * $BorderMarginMm, [MidpointRounding]::AwayFromZero))
+$outerMarginYDots = [Math]::Max(2, [int][Math]::Round($resolution.Y / 25.4 * $BorderMarginMm, [MidpointRounding]::AwayFromZero))
+$quietZoneModules = 10
+if (-not $Barcode) { $Barcode = Get-ValidPayload }
+$expectedPattern = Get-Code128Pattern $Barcode
+if ($BarcodePattern -and $BarcodePattern -cne $expectedPattern) {
+  throw 'Code 128 pattern does not match the requested numeric barcode.'
+}
+$pattern = $expectedPattern
+$totalModules = $pattern.Length + $quietZoneModules * 2
+$maxModuleDots = [Math]::Min(5.0, ($widthDots - 2 * $outerMarginXDots) / $totalModules)
 $effectiveModuleDots = if ($AutoFit) { $maxModuleDots } else { [Math]::Min($ModuleDots, $maxModuleDots) }
-if ($effectiveModuleDots -lt 3) { throw 'The detected label is too narrow for a reliably scannable EAN-13 barcode.' }
+if ($effectiveModuleDots -lt 3) { throw 'The detected label is too narrow for a reliably scannable Code 128 barcode.' }
 
-$barHeightDots = [int][Math]::Floor(($heightDots - 2 * $outerMarginDots) * $BarHeightPercent / 100.0)
-$left = [int][Math]::Round(($widthDots - 113 * $effectiveModuleDots) / 2.0 + $OffsetXmm * $resolution.X / 25.4, [MidpointRounding]::AwayFromZero)
+$barHeightDots = [int][Math]::Floor(($heightDots - 2 * $outerMarginYDots) * $BarHeightPercent / 100.0)
+$left = [int][Math]::Round(($widthDots - $totalModules * $effectiveModuleDots) / 2.0 + $OffsetXmm * $resolution.X / 25.4, [MidpointRounding]::AwayFromZero)
 $top = [int][Math]::Round(($heightDots - $barHeightDots) / 2.0 + $OffsetYmm * $resolution.Y / 25.4, [MidpointRounding]::AwayFromZero)
-if ($left -lt $outerMarginDots -or $top -lt $outerMarginDots -or
-    ($left + 113 * $effectiveModuleDots) -gt ($widthDots - $outerMarginDots) -or
-    ($top + $barHeightDots) -gt ($heightDots - $outerMarginDots)) {
+if ($left -lt $outerMarginXDots -or $top -lt $outerMarginYDots -or
+    ($left + $totalModules * $effectiveModuleDots) -gt ($widthDots - $outerMarginXDots) -or
+    ($top + $barHeightDots) -gt ($heightDots - $outerMarginYDots)) {
   throw 'Barcode does not fit the active label with these settings.'
 }
 
 $settings = [ordered]@{
   printerName       = $PrinterName
+  mediaWidthMm      = $paper.Width * 0.254
+  mediaHeightMm     = $paper.Height * 0.254
+  borderMarginMm    = $BorderMarginMm
   autoFit           = [bool]$AutoFit
   moduleDots        = $ModuleDots
   barHeightPercent  = $BarHeightPercent
   offsetXmm         = $OffsetXmm
   offsetYmm         = $OffsetYmm
+  applyDarkness     = $DarknessLevel -ge 0
+  darknessLevel     = if ($DarknessLevel -ge 0) { $DarknessLevel } else { 7 }
   mediaFitVersion   = 4
 }
 
 if ($Inspect) {
-  $testBarcode = Get-ValidEan13
-  $testPattern = Get-Ean13Pattern $testBarcode
   Write-Host "Printer: $PrinterName"
   Write-Host "Media: $($paper.PaperName), $($paper.Width * 0.254) x $($paper.Height * 0.254) mm, $($resolution.X) x $($resolution.Y) dpi"
-  Write-Host "Raster: $widthDots x $heightDots dots | fitted module width: $([Math]::Round($effectiveModuleDots, 2)) dots"
-  Write-Host "Barcode encoder: valid EAN-13, $($testPattern.Length) modules."
+  Write-Host "Raster: $widthDots x $heightDots dots | border margin: $BorderMarginMm mm | fitted module width: $([Math]::Round($effectiveModuleDots, 2)) dots | bar height: $barHeightDots dots"
+  Write-Host "Barcode: $Barcode | Code 128, $($pattern.Length) modules."
   $document.Dispose()
   return
 }
@@ -166,9 +259,7 @@ if ($SaveApproved) {
   exit 0
 }
 
-if (-not $Barcode) { $Barcode = Get-ValidEan13 }
 $barcode = $Barcode
-$pattern = Get-Ean13Pattern $barcode
 $bitmap = [System.Drawing.Bitmap]::new(
   $widthDots,
   $heightDots,
@@ -181,10 +272,10 @@ $graphics.Clear([System.Drawing.Color]::White)
 $black = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::Black)
 
 try {
-  for ($module = 0; $module -lt 95; $module++) {
+  for ($module = 0; $module -lt $pattern.Length; $module++) {
     if ($pattern[$module] -ne '1') { continue }
-    $x1 = $left + [int][Math]::Round((11 + $module) * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
-    $x2 = $left + [int][Math]::Round((12 + $module) * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
+    $x1 = $left + [int][Math]::Round(($quietZoneModules + $module) * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
+    $x2 = $left + [int][Math]::Round(($quietZoneModules + $module + 1) * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
     $graphics.FillRectangle($black, $x1, $top, [Math]::Max(1, $x2 - $x1), $barHeightDots)
   }
 
@@ -208,9 +299,12 @@ try {
     if (-not $Print) {
       throw 'Add -Print to submit exactly one label.'
     }
+    if ($DarknessLevel -ge 0) {
+      Set-TscDarkness -Name $PrinterName -Level $DarknessLevel
+    }
     Write-Host "Printer: $PrinterName"
     Write-Host "Media: $($paper.PaperName), $($paper.Width * 0.254) x $($paper.Height * 0.254) mm, $($resolution.X) x $($resolution.Y) dpi"
-    Write-Host "Barcode: $barcode | module width: $([Math]::Round($effectiveModuleDots, 2)) dots | bar height: $barHeightDots dots"
+    Write-Host "Barcode: $barcode | Code 128 | module width: $([Math]::Round($effectiveModuleDots, 2)) dots | bar height: $barHeightDots dots"
     Write-Host 'Submitting exactly one test label...'
     $document.Print()
     Write-Host 'One label submitted. Review it, then use the feedback in chat before printing another.'

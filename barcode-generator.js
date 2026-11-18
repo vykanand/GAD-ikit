@@ -12,7 +12,7 @@
      * Configuration constants
      */
     config: {
-      // Use 13-digit EAN-style format for standard barcode compatibility
+      // Keep the 13-digit numeric payload and check digit; it is printed as Code 128.
       BARCODE_LENGTH: 13,
       // Epoch offset (use a custom epoch to keep numbers manageable)
       EPOCH_OFFSET: 1609459200, // 2021-01-01 00:00:00 UTC in seconds
@@ -239,7 +239,7 @@
           metadata: {
             algorithm: 'timestamp-based-luhn-checksum',
             epoch: this.config.EPOCH_OFFSET,
-            format: 'EAN-13 style (13 digits)',
+            format: 'Code 128 symbol with 13-digit numeric payload',
             decodable: true,
             checksumValid: true
           }
@@ -259,7 +259,7 @@
         const testBarcode = this.generateBarcodeRecord();
         return {
           barcodeLength: this.config.BARCODE_LENGTH,
-          format: 'EAN-13 (13 digits)',
+          format: 'Code 128 (13-digit numeric payload)',
           uniqueInterval: '10 milliseconds',
           epochStart: new Date(this.config.EPOCH_OFFSET * 1000).toISOString(),
           checksumMethod: 'Luhn algorithm',

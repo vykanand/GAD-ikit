@@ -783,7 +783,7 @@
             // render barcode
             try {
               JsBarcode(svg, rec.barcode, {
-                format: 'EAN13',
+                format: 'CODE128',
                 width: 2,
                 height: 60,
                 displayValue: true,
