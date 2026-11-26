@@ -345,7 +345,7 @@ $black = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::Black)
 # Human-readable text under the barcode: CustomerKitPartcode on left, date on right
 $codeFont = [System.Drawing.Font]::new('Arial', 7, [System.Drawing.FontStyle]::Bold)
 $partCodeText = $barcode
-$dateText = (Get-Date -Format "dd/MM/yyyy")
+$dateText = (Get-Date -Format "dd/MM/yy")
 
 $partCodeSize = $graphics.MeasureString($partCodeText, $codeFont)
 $dateSize = $graphics.MeasureString($dateText, $codeFont)
