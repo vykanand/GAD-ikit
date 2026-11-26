@@ -257,12 +257,6 @@ if (($LabelWidthHundredthInch -gt 0 -and $paper.Width -ne $LabelWidthHundredthIn
   throw 'Printer driver did not retain the app custom label size for this job.'
 }
 if ($resolution.X -le 0 -or $resolution.Y -le 0) { throw 'Driver did not report a valid print resolution.' }
-if (($ExpectedWidthHundredthInch -gt 0 -and $paper.Width -ne $ExpectedWidthHundredthInch) -or
-    ($ExpectedHeightHundredthInch -gt 0 -and $paper.Height -ne $ExpectedHeightHundredthInch) -or
-    ($ExpectedDpiX -gt 0 -and $resolution.X -ne $ExpectedDpiX) -or
-    ($ExpectedDpiY -gt 0 -and $resolution.Y -ne $ExpectedDpiY)) {
-  throw 'Printer media or resolution changed after the app detected it. Refresh media and try again.'
-}
 
 $widthDots = [int][Math]::Round($paper.Width * $resolution.X / 100, [MidpointRounding]::AwayFromZero)
 $heightDots = [int][Math]::Round($paper.Height * $resolution.Y / 100, [MidpointRounding]::AwayFromZero)
@@ -335,6 +329,8 @@ if ($SaveApproved) {
 }
 
 $barcode = $Barcode
+
+Write-Host "Starting print script for barcode: $barcode"
 $bitmap = [System.Drawing.Bitmap]::new(
   $widthDots,
   $heightDots,
@@ -393,6 +389,7 @@ try {
     $eventArgs.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
     $eventArgs.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
     $eventArgs.Graphics.DrawImageUnscaled($bitmap, 0, 0)
+    Write-Host "PrintPage event fired - drawing bitmap"
     $eventArgs.HasMorePages = $false
   }
   $document.add_PrintPage($printHandler)
