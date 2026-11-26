@@ -60,6 +60,20 @@ The working version also does **not** force
 - Do not change `barcode-display.js` printing call (`invoke('print-barcode', { barcode })`)
   or the `main.js` print handler when touching unrelated features.
 
+## Module width must be a whole number of dots
+
+Even with a perfect 1:1 blit, a **fractional** module width breaks scanning.
+At 2.59 dots/module each bar and space rasterises to 2 or 3 dots, so the
+Code 128 bar ratios are wrong (a 3-dot bar next to a 2-dot space reads as
+1.5:1 instead of 1:1) and scanners fail. The raster looks fine to the eye.
+
+- Always `Floor()` the fitted module width to an integer, minimum 2 dots.
+- If a payload does not fit at 3 dots, shrink the **symbol**, not the module:
+  encode runs of 4+ digits in Code Set C so e.g. `EAD64745024` stays at
+  123 modules (same as a 13-digit numeric code) and prints at 3 dots.
+- 11-char all-letter payloads cannot fit 3 dots on a 58.42 mm / 203 DPI label
+  (156 modules); they fall back to uniform 2-dot modules.
+
 ## Verification
 
 1. Print one 13-digit barcode from the app.

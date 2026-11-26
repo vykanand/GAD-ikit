@@ -110,7 +110,9 @@ function Get-Code128Pattern([string]$Code) {
     return $pattern + $patterns[$checksum] + $patterns[106]
   }
 
-  # Code 128 Set B for printable ASCII payloads (e.g. part codes like EAD64745024).
+  # Code 128 auto mode for printable ASCII payloads (e.g. part codes like
+  # EAD64745024). Runs of 4+ digits use Code Set C so the symbol stays at
+  # 123 modules and prints with uniform 3-dot modules.
   if ([string]::IsNullOrEmpty($Code)) { throw 'Barcode payload must not be empty.' }
   if ($Code.Length -gt 80) { throw 'Barcode payload is too long for Code 128.' }
   $bytes = [System.Text.Encoding]::ASCII.GetBytes($Code)
@@ -121,8 +123,50 @@ function Get-Code128Pattern([string]$Code) {
   }
 
   $codewords = [System.Collections.Generic.List[int]]::new()
-  $codewords.Add(104)
-  foreach ($byte in $bytes) { $codewords.Add([int]$byte - 32) }
+  $codewords.Add(104) # START B
+  $set = 'B'
+  $index = 0
+  while ($index -lt $Code.Length) {
+    $charCode = [int][char]$Code[$index]
+    $isDigit = $charCode -ge 48 -and $charCode -le 57
+
+    if (-not $isDigit) {
+      if ($set -ne 'B') { $codewords.Add(100); $set = 'B' }
+      $codewords.Add($charCode - 32)
+      $index += 1
+      continue
+    }
+
+    $end = $index
+    while ($end -lt $Code.Length) {
+      $next = [int][char]$Code[$end]
+      if ($next -lt 48 -or $next -gt 57) { break }
+      $end += 1
+    }
+    $run = $end - $index
+
+    if ($run -ge 4) {
+      if (($run % 2) -eq 1) {
+        if ($set -ne 'B') { $codewords.Add(100); $set = 'B' }
+        $codewords.Add([int][char]$Code[$index] - 32)
+        $index += 1
+        $run -= 1
+      }
+      if ($set -ne 'C') { $codewords.Add(99); $set = 'C' }
+      for ($offset = 0; $offset -lt $run; $offset += 2) {
+        $codewords.Add([int]::Parse($Code.Substring($index + $offset, 2)))
+      }
+      $index += $run
+    }
+    else {
+      if ($set -ne 'B') { $codewords.Add(100); $set = 'B' }
+      for ($offset = 0; $offset -lt $run; $offset += 1) {
+        $codewords.Add([int][char]$Code[$index + $offset] - 32)
+      }
+      $index += $run
+    }
+  }
+
   $checksum = $codewords[0]
   for ($index = 1; $index -lt $codewords.Count; $index++) {
     $checksum += $codewords[$index] * $index
@@ -234,6 +278,9 @@ $pattern = $expectedPattern
 $totalModules = $pattern.Length + $quietZoneModules * 2
 $maxModuleDots = [Math]::Min(5.0, ($widthDots - 2 * $outerMarginXDots) / $totalModules)
 $effectiveModuleDots = if ($AutoFit) { $maxModuleDots } else { [Math]::Min($ModuleDots, $maxModuleDots) }
+# Whole-dot modules only: a fractional width makes bars alternate 2/3 dots and
+# breaks the Code 128 bar ratios even though the raster itself is 1:1.
+$effectiveModuleDots = [Math]::Floor($effectiveModuleDots)
 if ($effectiveModuleDots -lt 2) { throw 'The detected label is too narrow for a reliably scannable Code 128 barcode.' }
 if ($effectiveModuleDots -lt 3) {
   Write-Warning ("Module width {0:N2} dots is below the 3-dot preference because the payload is long for this label. The raster is still blitted 1:1 at 203 DPI." -f $effectiveModuleDots)

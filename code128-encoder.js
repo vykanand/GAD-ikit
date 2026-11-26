@@ -85,12 +85,67 @@
     return encoded;
   }
 
-  // Code Set B for printable ASCII (part codes such as EAD64745024).
-  function encodeSetB(value) {
-    const codewords = [104];
-    for (let index = 0; index < value.length; index += 1) {
-      codewords.push(value.charCodeAt(index) - 32);
+  // Code 128 auto mode for printable ASCII payloads. Runs of 4+ digits are
+  // encoded in Code Set C (two digits per codeword), everything else in Set B.
+  // This keeps part codes such as EAD64745024 at 123 modules, the same width
+  // as a 13-digit numeric barcode, so they print with uniform 3-dot modules.
+  function encodeAuto(value) {
+    const codewords = [104]; // START B
+    let set = 'B';
+    let index = 0;
+
+    while (index < value.length) {
+      const code = value.charCodeAt(index);
+      const isDigit = code >= 48 && code <= 57;
+
+      if (!isDigit) {
+        if (set !== 'B') {
+          codewords.push(100); // CODE B
+          set = 'B';
+        }
+        codewords.push(code - 32);
+        index += 1;
+        continue;
+      }
+
+      let end = index;
+      while (end < value.length) {
+        const next = value.charCodeAt(end);
+        if (next < 48 || next > 57) break;
+        end += 1;
+      }
+      let run = end - index;
+
+      if (run >= 4) {
+        if (run % 2 === 1) {
+          if (set !== 'B') {
+            codewords.push(100); // CODE B
+            set = 'B';
+          }
+          codewords.push(value.charCodeAt(index) - 32);
+          index += 1;
+          run -= 1;
+        }
+        if (set !== 'C') {
+          codewords.push(99); // CODE C
+          set = 'C';
+        }
+        for (let offset = 0; offset < run; offset += 2) {
+          codewords.push(Number(value.slice(index + offset, index + offset + 2)));
+        }
+        index += run;
+      } else {
+        if (set !== 'B') {
+          codewords.push(100); // CODE B
+          set = 'B';
+        }
+        for (let offset = 0; offset < run; offset += 1) {
+          codewords.push(value.charCodeAt(index + offset) - 32);
+        }
+        index += run;
+      }
     }
+
     const encoded = [...codewords, checksumFor(codewords), 106]
       .map((codeword) => patterns[codeword])
       .join('');
@@ -106,7 +161,7 @@
         'Barcode value must be a valid 13-digit numeric code or printable ASCII text.',
       );
     }
-    return isNumericPayload(value) ? encodeNumeric(value) : encodeSetB(value);
+    return isNumericPayload(value) ? encodeNumeric(value) : encodeAuto(value);
   }
 
   return { encode, isValidPayload };
