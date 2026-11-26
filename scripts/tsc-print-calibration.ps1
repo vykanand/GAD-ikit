@@ -370,11 +370,12 @@ try {
   }
 
   # Draw CustomerKitPartcode on the left side under barcode
-  $partCodeX = 15
+  # Use a dedicated text margin (25 dots ≈ 3.1 mm) so the printer's internal margins don't clip the text at the label edges.
+  $partCodeX = 25
   $graphics.DrawString($partCodeText, $codeFont, $black, $partCodeX, $codeTextY)
 
   # Draw date on the right side under barcode
-  $dateX = $widthDots - $dateSize.Width - 15
+  $dateX = $widthDots - $dateSize.Width - 25
   $graphics.DrawString($dateText, $codeFont, $black, $dateX, $codeTextY)
 
   $document.DefaultPageSettings.Margins = [System.Drawing.Printing.Margins]::new(0, 0, 0, 0)
