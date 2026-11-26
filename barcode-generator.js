@@ -101,12 +101,13 @@
 
     /**
      * Verify a barcode's check digit
+     * Only valid for 13-digit numeric barcodes
      * @param {string} barcode - Complete barcode with check digit
      * @returns {boolean} True if check digit is valid
      */
     verifyBarcode: function (barcode) {
       try {
-        if (!barcode || barcode.length !== this.config.BARCODE_LENGTH) {
+        if (!barcode || !/^\d{13}$/.test(barcode)) {
           return false;
         }
         
@@ -123,14 +124,15 @@
 
     /**
      * Decode a barcode to retrieve the original timestamp and date
+     * Only valid for 13-digit numeric barcodes
      * @param {string} barcode - The barcode to decode
      * @returns {Object|null} { timestamp, dateTime, milliseconds, verified } or null if invalid
      */
     decodeBarcode: function (barcode) {
       try {
-        // Validate format and check digit
-        if (!barcode || barcode.length !== this.config.BARCODE_LENGTH) {
-          console.warn('BarcodeGenerator.decodeBarcode: invalid barcode length', barcode);
+        // Validate format - must be 13-digit numeric
+        if (!barcode || !/^\d{13}$/.test(barcode)) {
+          console.warn('BarcodeGenerator.decodeBarcode: invalid barcode format (requires 13-digit numeric)');
           return null;
         }
         
@@ -184,18 +186,24 @@
     },
 
     /**
-     * Format a barcode for display (groups of 4-4-5 digits)
+     * Format a barcode for display
+     * For 13-digit numeric: groups of 4-4-5 digits with hyphens
+     * For alphanumeric: return as-is (no fixed format)
      * @param {string} barcode - The barcode to format
      * @returns {string} Formatted barcode
      */
     formatBarcode: function (barcode) {
       try {
-        if (!barcode || barcode.length !== this.config.BARCODE_LENGTH) {
+        if (!barcode || barcode.length === 0) {
+          return '';
+        }
+        const isNumeric = /^\d{13}$/.test(barcode);
+        if (!isNumeric) {
           return barcode;
         }
         // Format as XXXX-XXXX-XXXXX for readability
-        return barcode.slice(0, 4) + '-' + 
-               barcode.slice(4, 8) + '-' + 
+        return barcode.slice(0, 4) + '-' +
+               barcode.slice(4, 8) + '-' +
                barcode.slice(8);
       } catch (e) {
         console.error('BarcodeGenerator.formatBarcode error:', e);

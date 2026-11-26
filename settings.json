@@ -2,21 +2,33 @@
   "fields": [
     {
       "id": "field_0",
-      "label": "Manual code",
-      "header": "Manual code",
+      "label": "Part Code",
+      "header": "Part Code",
       "headerCol": "A"
     },
     {
-      "id": "field_1",
-      "label": "Part Code",
-      "header": "Part Code",
-      "headerCol": "B"
+      "id": "field_2",
+      "label": "User Manual 1",
+      "header": "User Manual 1",
+      "headerCol": "C"
+    },
+    {
+      "id": "field_3",
+      "label": "User Manual 2",
+      "header": "User Manual 2",
+      "headerCol": "D"
+    },
+    {
+      "id": "field_4",
+      "label": "User Manual 3",
+      "header": "User Manual 3",
+      "headerCol": "E"
     }
   ],
-  "primaryFields": ["field_0", "field_1"],
+  "primaryFields": ["field_0", "field_2", "field_3", "field_4"],
   "scanOperation": "equals",
   "displayField": "field_0",
-  "displayFields": ["field_0", "field_1"],
+  "displayFields": ["field_0"],
   "removedHeaders": [],
   "showMultiScanPanel": true,
   "groupingFields": []

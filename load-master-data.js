@@ -32,6 +32,8 @@ window.loadMasterDataExternal = async function loadMasterDataExternal(forceReloa
       }
       return { name, col, norm, uniqueKey };
     });
+    // Expose on window so other modules (e.g. scan-manager) can resolve columns by header name
+    try { window.headerInfos = headerInfos; } catch (e) {}
     console.log("Headers found:", headers, "headerInfos:", headerInfos);
 
     // Keep raw rows (arrays) and also build convenience mapped objects for compatibility

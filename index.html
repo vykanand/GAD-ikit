@@ -2392,6 +2392,7 @@
       // Flag to prevent multiple simultaneous saves
       let isSaving = false;
       let currentLogDate = new Date().toISOString().split("T")[0]; // Track current log date
+      let currentLogSerial = 0; // Running serial number per day, matches CSV format
 
       // Function to load scan logs from today's date file
       async function loadTodaysScanLogs() {
@@ -2483,7 +2484,6 @@
 
         if (isSaving) {
           console.log("Already saving, queuing this save...");
-          // Wait a bit and retry
           setTimeout(() => saveScanLogRealtime(logEntry), 100);
           return;
         }
@@ -2491,73 +2491,77 @@
         isSaving = true;
 
         try {
-          // Check if date has changed (new day started)
           const today = new Date().toISOString().split("T")[0];
           if (today !== currentLogDate) {
-            console.log("Date changed from", currentLogDate, "to", today);
             currentLogDate = today;
+            currentLogSerial = 0; // reset serial for new day
           }
 
-          // Prepare single log entry for saving using configured fields
-          const logToSave = {};
-          logToSave["Date"] = logEntry.timestamp.toLocaleDateString("en-GB");
-          logToSave["Time"] = logEntry.timestamp.toLocaleTimeString("en-GB");
-
-          // Include configured fields using their header names - prefer values from logEntry (if present),
-          // then master data (currentSelectedRow), then DOM inputs.
-          (settings.fields || []).forEach((f) => {
-            const header = f.header || f.label || f.id;
-            try {
-              let val = "";
-              if (logEntry && logEntry[header] !== undefined) {
-                val = logEntry[header] || "";
-              }
-              if (!val && currentSelectedRow) {
-                val = getValueFromRow(currentSelectedRow, f.id) || "";
-              }
-              if (!val) {
-                const el = document.getElementById(f.id);
-                val = el ? el.value || "" : "";
-              }
-              logToSave[header] = val;
-            } catch (e) {
-              logToSave[header] = "";
+          // Resolve master row values by header name via headerInfos (raw Excel row)
+          const findColIdx = (name) => {
+            const hi = (window.headerInfos || []).find(
+              (h) => h && String(h.name || "") === String(name),
+            );
+            return hi ? window.headerInfos.indexOf(hi) : -1;
+          };
+          const row = Array.isArray(window.currentSelectedRow)
+            ? window.currentSelectedRow
+            : null;
+          const getCell = (name) => {
+            if (!row) return "";
+            const idx = findColIdx(name);
+            if (idx >= 0 && row[idx] !== undefined && row[idx] !== null) {
+              return String(row[idx] || "").trim();
             }
-          });
+            return "";
+          };
 
-          // Add scan-by value as an explicit column (preserve the key as-is)
-          try {
-            logToSave["scan-by"] = document.getElementById("scan-by")
-              ? document.getElementById("scan-by").value
-              : logEntry.scannerInfo || "";
-          } catch (e) {
-            logToSave["scan-by"] = logEntry.scannerInfo || "";
-          }
+          // Build timestamp in CSV format (DD-MM-YYYY, HH:mm:ss)
+          const ts = logEntry && logEntry.timestamp
+            ? new Date(logEntry.timestamp)
+            : new Date();
+          const scanDate =
+            String(ts.getDate()).padStart(2, "0") +
+            "-" +
+            String(ts.getMonth() + 1).padStart(2, "0") +
+            "-" +
+            String(ts.getFullYear());
+          const scanTime =
+            String(ts.getHours()).padStart(2, "0") +
+            ":" +
+            String(ts.getMinutes()).padStart(2, "0") +
+            ":" +
+            String(ts.getSeconds()).padStart(2, "0");
 
-          // Add legacy/common columns (prefer explicit keys on logEntry if present)
-          // Save under new headers: Generated code 1 and Generated code 2 (duplicate)
-          const genVal =
-            (logEntry &&
-              (logEntry["Generated code 1"] || logEntry["Scanned Code"])) ||
-            logEntry.scannedCode ||
+          const currentLogEntry = {};
+          currentLogEntry["PartCode"] = getCell("PartCode") || "";
+          currentLogEntry["ScannedData"] = logEntry && logEntry.scannedCode
+            ? String(logEntry.scannedCode)
+            : (getCell("PartCode") || "");
+          currentLogEntry["CustPartCode"] = getCell("CustomerKitPartcode") || "";
+          currentLogEntry["UserMan1"] =
+            getCell("User Manual 1") ||
+            getValueFromRow(window.currentSelectedRow, "field_2") ||
             "";
-          logToSave["Generated code 1"] = genVal;
-          logToSave["Generated code 2"] =
-            (logEntry && logEntry["Generated code 2"]) || genVal;
-          logToSave["Scanner"] =
-            logEntry && logEntry["Scanner"] !== undefined
-              ? logEntry["Scanner"]
-              : logEntry.scannerInfo || "";
-          logToSave["Status"] =
-            logEntry && logEntry["Status"] !== undefined
-              ? logEntry["Status"]
-              : logEntry.matchStatus || "";
+          currentLogEntry["UserMan2"] =
+            getCell("User Manual 2") ||
+            getValueFromRow(window.currentSelectedRow, "field_3") ||
+            "";
+          currentLogEntry["UserMan3"] =
+            getCell("User Manual 3") ||
+            getValueFromRow(window.currentSelectedRow, "field_4") ||
+            "";
+          currentLogEntry["ScanDate"] = scanDate;
+          currentLogEntry["ScanTime"] = scanTime;
+          currentLogEntry["SerialNo"] = String(++currentLogSerial);
+          currentLogEntry["weight"] = "0";
+          currentLogEntry["ScanStatus"] = "SUCCESS";
 
-          console.log("Saving log entry to Excel:", logToSave);
+          console.log("Saving log entry to Excel (CSV format):", currentLogEntry);
 
           // Save single log entry using IPC with date-based filename
           const result = await ipcRenderer.invoke("write-single-log", {
-            log: logToSave,
+            log: currentLogEntry,
             date: currentLogDate,
           });
 
@@ -2586,60 +2590,71 @@
           const today = new Date().toISOString().split("T")[0];
           if (today !== currentLogDate) {
             currentLogDate = today;
+            currentLogSerial = 0;
           }
 
-          const logToSave = {};
-          logToSave["Date"] = logEntry.timestamp.toLocaleDateString("en-GB");
-          logToSave["Time"] = logEntry.timestamp.toLocaleTimeString("en-GB");
-
-          // Include configured fields using their header names - prefer values from logEntry (if present), then DOM inputs
-          (settings.fields || []).forEach((f) => {
-            const header = f.header || f.label || f.id;
-            try {
-              if (logEntry && logEntry[header] !== undefined) {
-                logToSave[header] = logEntry[header] || "";
-              } else {
-                logToSave[header] = document.getElementById(f.id)
-                  ? document.getElementById(f.id).value
-                  : "";
-              }
-            } catch (e) {
-              logToSave[header] = "";
+          const findColIdx = (name) => {
+            const hi = (window.headerInfos || []).find(
+              (h) => h && String(h.name || "") === String(name),
+            );
+            return hi ? window.headerInfos.indexOf(hi) : -1;
+          };
+          const row = Array.isArray(window.currentSelectedRow)
+            ? window.currentSelectedRow
+            : null;
+          const getCell = (name) => {
+            if (!row) return "";
+            const idx = findColIdx(name);
+            if (idx >= 0 && row[idx] !== undefined && row[idx] !== null) {
+              return String(row[idx] || "").trim();
             }
-          });
+            return "";
+          };
 
-          // Add scan-by value as an explicit column (preserve the key as-is)
-          try {
-            logToSave["scan-by"] = document.getElementById("scan-by")
-              ? document.getElementById("scan-by").value
-              : logEntry.scannerInfo || "";
-          } catch (e) {
-            logToSave["scan-by"] = logEntry.scannerInfo || "";
-          }
+          const ts = logEntry && logEntry.timestamp
+            ? new Date(logEntry.timestamp)
+            : new Date();
+          const scanDate =
+            String(ts.getDate()).padStart(2, "0") +
+            "-" +
+            String(ts.getMonth() + 1).padStart(2, "0") +
+            "-" +
+            String(ts.getFullYear());
+          const scanTime =
+            String(ts.getHours()).padStart(2, "0") +
+            ":" +
+            String(ts.getMinutes()).padStart(2, "0") +
+            ":" +
+            String(ts.getSeconds()).padStart(2, "0");
 
-          // Add generated code columns (duplicate value) and legacy/common columns
-          const genValErr =
-            (logEntry &&
-              (logEntry["Generated code 1"] || logEntry["Scanned Code"])) ||
-            logEntry.scannedCode ||
+          const currentLogEntry = {};
+          currentLogEntry["PartCode"] = getCell("PartCode") || "";
+          currentLogEntry["ScannedData"] = logEntry && logEntry.scannedCode
+            ? String(logEntry.scannedCode)
+            : (getCell("PartCode") || "");
+          currentLogEntry["CustPartCode"] = getCell("CustomerKitPartcode") || "";
+          currentLogEntry["UserMan1"] =
+            getCell("User Manual 1") ||
+            getValueFromRow(window.currentSelectedRow, "field_2") ||
             "";
-          logToSave["Generated code 1"] = genValErr;
-          logToSave["Generated code 2"] =
-            (logEntry && logEntry["Generated code 2"]) || genValErr;
+          currentLogEntry["UserMan2"] =
+            getCell("User Manual 2") ||
+            getValueFromRow(window.currentSelectedRow, "field_3") ||
+            "";
+          currentLogEntry["UserMan3"] =
+            getCell("User Manual 3") ||
+            getValueFromRow(window.currentSelectedRow, "field_4") ||
+            "";
+          currentLogEntry["ScanDate"] = scanDate;
+          currentLogEntry["ScanTime"] = scanTime;
+          currentLogEntry["SerialNo"] = String(++currentLogSerial);
+          currentLogEntry["weight"] = "0";
+          currentLogEntry["ScanStatus"] = "FAILED";
 
-          logToSave["Scanner"] =
-            logEntry && logEntry["Scanner"] !== undefined
-              ? logEntry["Scanner"]
-              : logEntry.scannerInfo || "";
-          logToSave["Status"] =
-            logEntry && logEntry["Status"] !== undefined
-              ? logEntry["Status"]
-              : logEntry.matchStatus || "";
-
-          console.log("Saving error log entry to Excel:", logToSave);
+          console.log("Saving error log entry to Excel (CSV format):", currentLogEntry);
 
           const result = await ipcRenderer.invoke("write-single-log", {
-            log: logToSave,
+            log: currentLogEntry,
             date: "error-" + currentLogDate,
           });
 

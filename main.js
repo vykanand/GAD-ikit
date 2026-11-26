@@ -18,36 +18,48 @@ if (!APP_DEBUG) {
 }
 
 // Function to read Excel file with original format preservation
+function safeCellToString(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return String(value);
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'object') {
+    if (value.t !== undefined && value.v !== undefined) {
+      return String(value.t || value.v).trim();
+    }
+    return String(value).trim();
+  }
+  return String(value).trim();
+}
+
 async function readExcelFile(filePath) {
   try {
     const buffer = fs.readFileSync(filePath);
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const workbook = XLSX.read(buffer, { type: 'buffer', raw: false });
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-    
-    // Get the range of the sheet
+
     const range = XLSX.utils.decode_range(firstSheet['!ref']);
     const data = [];
     const headers = [];
 
-    // Find column headers
     for (let C = range.s.c; C <= range.e.c; ++C) {
-      const cell = firstSheet[XLSX.utils.encode_cell({r: 0, c: C})];
-      headers[C] = cell?.v?.toString().trim() || '';
+      const cell = firstSheet[XLSX.utils.encode_cell({ r: 0, c: C })];
+      headers[C] = safeCellToString(cell?.v);
     }
     data.push(headers);
 
-    // Read data rows
     for (let R = range.s.r + 1; R <= range.e.r; ++R) {
       const row = [];
       for (let C = range.s.c; C <= range.e.c; ++C) {
-        const cell = firstSheet[XLSX.utils.encode_cell({r: R, c: C})];
-        row[C] = cell?.v?.toString().trim() || '';
+        const cell = firstSheet[XLSX.utils.encode_cell({ r: R, c: C })];
+        row[C] = safeCellToString(cell?.v);
       }
-      if (row.some(cell => cell !== '')) { // Skip empty rows
+      if (row.some((cell) => cell !== '' && cell !== undefined)) {
         data.push(row);
       }
     }
-    
+
     return data;
   } catch (error) {
     console.error('Error reading Excel file:', error);
@@ -398,9 +410,8 @@ async function printBarcode(data, webContents) {
     const offsetYmm = data.offsetYmm ?? savedConfig.offsetYmm;
     const applyDarkness = data.applyDarkness ?? savedConfig.applyDarkness;
     const darknessLevel = data.darknessLevel ?? savedConfig.darknessLevel;
-    if (!/^\d{13}$/.test(barcode || '')) throw new Error('Invalid 13-digit numeric barcode');
     if (!Code128Encoder.isValidPayload(barcode)) {
-      throw new Error('Barcode payload has an invalid check digit');
+      throw new Error('Barcode payload is invalid or has an invalid check digit');
     }
     const barcodePattern = Code128Encoder.encode(barcode);
     if (typeof autoFit !== 'boolean' ||
@@ -630,8 +641,8 @@ function createWindow() {
     }
   });
 
-  // Load the direct barcode printer test page.
-  mainWindow.loadFile('print-test.html');
+  // Keep index.html as the main application page.
+  mainWindow.loadFile('index.html');
 
   // Maximize the window
   mainWindow.maximize();

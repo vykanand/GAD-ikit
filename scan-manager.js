@@ -19,6 +19,8 @@
         // Debug: snapshot the currentSelectedRow at session start
         try { console.info && console.info('scanManager.startSessionForCurrentPart: window.currentSelectedRow=', window.currentSelectedRow); } catch (e) {}
         this.scanSession.targetPart = window.currentSelectedRow || null;
+        // Store a reference to the current selected row for later use (e.g. success barcodes)
+        this.scanSession.currentSelectedRow = window.currentSelectedRow || null;
         try { console.info && console.info('scanManager.startSessionForCurrentPart: initial targetPart=', this.scanSession.targetPart); } catch (e) {}
         // If no explicit selection, try resolve from primary input value
         if (!this.scanSession.targetPart) {
@@ -148,7 +150,45 @@
           const sf = window.settings && window.settings.fields;
         } catch (e) {}
         this.scanSession.requiredFields = req;
-        safeLog.info && safeLog.info('scanManager: requiredFields initialized', req);
+        safeLog.info && safeLog.info('scanManager: requiredFields initialized (raw)', req);
+
+        // Filter requiredFields to only include fields that have actual values in the selected part
+        // Treat "NA", "N/A", "", null, undefined as empty
+        try {
+          const target = this.scanSession.targetPart;
+          if (target && typeof window.getValueFromRow === 'function') {
+            const hasValue = (fid) => {
+              const val = window.getValueFromRow(target, fid) || '';
+              return val && val.trim() && val.toUpperCase() !== 'NA' && val.toUpperCase() !== 'N/A';
+            };
+            const filtered = (req || []).filter(hasValue);
+            if (filtered.length !== req.length) {
+              safeLog.info && safeLog.info('scanManager: filtered requiredFields by value', { original: req, filtered });
+            }
+            this.scanSession.requiredFields = filtered;
+            req = filtered;
+          }
+        } catch (e) {
+          safeLog.warn && safeLog.warn('scanManager: value filtering failed', e);
+        }
+
+        // Hide DOM inputs for fields that are not in requiredFields (empty/NA)
+        try {
+          const settingFields = window.settings?.fields || [];
+          settingFields.forEach(f => {
+            const el = document.getElementById(f.id);
+            if (el) {
+              const row = el.closest('.row');
+              if (req.includes(f.id)) {
+                el.style.display = '';
+                if (row) row.style.display = '';
+              } else {
+                el.style.display = 'none';
+                if (row) row.style.display = 'none';
+              }
+            }
+          });
+        } catch (e) {}
         this._ensurePanelExists();
         // ensure panel is visible for immediate user feedback
         try {
@@ -636,6 +676,23 @@
 
         // (Save button removed — autosave will occur when multi-field pass completes)
 
+        // Print both generated barcode labels with the tested Windows printer mechanism
+        const printBtn = document.createElement('button');
+        printBtn.id = 'final-pass-print-btn';
+        printBtn.textContent = 'PRINT 2 BARCODE LABELS';
+        printBtn.style.background = 'linear-gradient(90deg,#1565c0,#42a5f5)';
+        printBtn.style.border = 'none';
+        printBtn.style.color = '#fff';
+        printBtn.style.fontSize = '16px';
+        printBtn.style.fontWeight = '900';
+        printBtn.style.padding = '12px 24px';
+        printBtn.style.borderRadius = '8px';
+        printBtn.style.cursor = 'pointer';
+        printBtn.addEventListener('click', () => {
+          try { this._onFinalPassPrint(printBtn); } catch (e) { console.error(e); }
+        });
+        buttonsContainer.appendChild(printBtn);
+
         // Proceed button (green)
         const btn = document.createElement('button');
         btn.id = 'final-pass-proceed-btn';
@@ -725,15 +782,76 @@
             // fallback: if generator couldn't produce a second unique code, derive one by incrementing last digit
             try {
               const b = String(barcodeRecord1.barcode || '');
-              const last = Number(b.slice(-1) || '0');
-              const alt = b.slice(0, -1) + String((last + 1) % 10);
+              const data = b.slice(0, 12);
+              let incremented = BigInt(data) + 1n;
+              const nextData = incremented.toString().padStart(12, '0').slice(-12);
+              let sum = 0;
+              let multiplyByThree = true;
+              for (let i = 11; i >= 0; i--) {
+                let digit = Number(nextData[i]);
+                if (multiplyByThree) digit *= 3;
+                sum += digit;
+                multiplyByThree = !multiplyByThree;
+              }
+              const alt = nextData + String((10 - (sum % 10)) % 10);
               barcodeRecord2 = Object.assign({}, barcodeRecord1, { barcode: alt, barcodeFormatted: window.BarcodeGenerator.formatBarcode(alt) });
             } catch (e) {
               barcodeRecord2 = barcodeRecord1;
             }
           }
 
-          // Store barcodes in session for printing/export
+          // Resolve CustomerKitPartcode and PartCode from the currently selected master row.
+          // Prefer window.masterData[currentSelectedRowIndex] (object with named keys).
+          // Fall back to raw array row resolved via window.headerInfos column names.
+          try {
+            const rowIdx = window.currentSelectedRowIndex != null
+              ? Number(window.currentSelectedRowIndex)
+              : null;
+            let custVal = "";
+            let partVal = "";
+            if (rowIdx != null && Array.isArray(window.masterData) && rowIdx >= 0 && rowIdx < window.masterData.length) {
+              const rowObj = window.masterData[rowIdx];
+              custVal = String(rowObj && rowObj["CustomerKitPartcode"] || "").trim();
+              partVal = String(rowObj && rowObj["PartCode"] || "").trim();
+            } else {
+              const row = this.scanSession.currentSelectedRow;
+              if (Array.isArray(row) && Array.isArray(window.headerInfos)) {
+                const idxFor = (name) => {
+                  const hi = window.headerInfos.find(
+                    (h) => h && String(h.name || "") === String(name),
+                  );
+                  return hi ? window.headerInfos.indexOf(hi) : -1;
+                };
+                const custIdx = idxFor("CustomerKitPartcode");
+                const partIdx = idxFor("PartCode");
+                custVal =
+                  custIdx >= 0 && row[custIdx] !== undefined && row[custIdx] !== null
+                    ? String(row[custIdx] || "").trim()
+                    : "";
+                partVal =
+                  partIdx >= 0 && row[partIdx] !== undefined && row[partIdx] !== null
+                    ? String(row[partIdx] || "").trim()
+                    : "";
+              }
+            }
+            // Only override when real values exist (not NA / N/A / empty)
+            if (custVal && custVal.toUpperCase() !== "NA" && custVal.toUpperCase() !== "N/A") {
+              barcodeRecord1 = {
+                barcode: custVal,
+                barcodeFormatted: window.BarcodeGenerator.formatBarcode(custVal),
+              };
+            }
+            if (partVal && partVal.toUpperCase() !== "NA" && partVal.toUpperCase() !== "N/A") {
+              barcodeRecord2 = {
+                barcode: partVal,
+                barcodeFormatted: window.BarcodeGenerator.formatBarcode(partVal),
+              };
+            }
+          } catch (e) {
+            // non-fatal – keep the originally generated barcodes
+          }
+
+          // Store (possibly overridden) barcodes in session for printing/export
           try { this.scanSession.generatedBarcode1 = barcodeRecord1; } catch (e) {}
           try { this.scanSession.generatedBarcode2 = barcodeRecord2; } catch (e) {}
         }
@@ -845,33 +963,39 @@
       } catch (e) { console.error('scanManager._hideFinalPassModal error', e); }
     },
 
-    _onFinalPassPrint: async function () {
+    _onFinalPassPrint: async function (button) {
       try {
-        // Get the stored barcode from session (use first generated code)
-        const barcodeRecord = this.scanSession.generatedBarcode1 || this.scanSession.generatedBarcode;
-        if (!barcodeRecord) {
-          console.error('scanManager: no barcode available for printing');
+        const barcodeRecord1 = this.scanSession.generatedBarcode1 || this.scanSession.generatedBarcode;
+        const barcodeRecord2 = this.scanSession.generatedBarcode2 || barcodeRecord1;
+        if (!barcodeRecord1) {
+          console.error('scanManager: no barcodes available for printing');
+          return;
+        }
+        if (typeof window.BarcodeDisplay === 'undefined' || typeof window.BarcodeDisplay.printBarcode !== 'function') {
+          window.print();
           return;
         }
 
-        // Prepare metadata for printing
-        const metadata = {
-          dateTime: barcodeRecord.scanDateTime,
-          scanBy: (window.settings && window.settings.scanBy) || 
-                  (document.getElementById('scan-by') && document.getElementById('scan-by').value) || 
-                  'SYSTEM'
-        };
-
-        // Use BarcodeDisplay to print if available
-        if (typeof window.BarcodeDisplay !== 'undefined' && window.BarcodeDisplay.printBarcode) {
-          await window.BarcodeDisplay.printBarcode(barcodeRecord.barcode, metadata);
-        } else {
-          // Fallback: use browser print for current modal content
-          window.print();
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'PRINTING 1 OF 2...';
         }
+        const printed1 = await window.BarcodeDisplay.printBarcode(barcodeRecord1.barcode, {
+          dateTime: barcodeRecord1.scanDateTime
+        });
+        if (!printed1) throw new Error('First barcode label failed');
+        if (button) button.textContent = 'PRINTING 2 OF 2...';
+        const printed2 = await window.BarcodeDisplay.printBarcode(barcodeRecord2.barcode, {
+          dateTime: barcodeRecord2.scanDateTime
+        });
+        if (!printed2) throw new Error('Second barcode label failed');
+        if (button) button.textContent = '2 LABELS PRINTED';
 
       } catch (e) {
         console.error('scanManager._onFinalPassPrint error', e);
+        if (button) button.textContent = 'PRINT FAILED - RETRY';
+      } finally {
+        if (button) button.disabled = false;
       }
     },
 
@@ -894,6 +1018,16 @@
         logEntry['Barcode Formatted'] = b1.barcodeFormatted || '';
         logEntry.matchStatus = 'ALL_FIELDS_MATCHED';
         logEntry.Status = 'SAVED_BARCODE';
+
+        // Capture the last scanned code for the ScannedData column in history logs
+        try {
+          const seq = this.scanSession._scanSequence || [];
+          if (seq.length > 0) {
+            logEntry.scannedCode = seq[seq.length - 1].scannedCode || '';
+          } else if (this.scanSession._currentScanRecord) {
+            logEntry.scannedCode = this.scanSession._currentScanRecord.scannedCode || '';
+          }
+        } catch (e) {}
 
         // Include configured fields (try from currentSelectedRow or DOM inputs)
         try {
@@ -1202,13 +1336,12 @@
           try {
             const passEl = document.getElementById('pass-status');
             if (passEl) {
-              passEl.textContent = 'PASSED';
+              passEl.textContent = 'PENDING';
               passEl.classList.remove('failed');
               passEl.style.background = 'linear-gradient(90deg,#ffd54f,#ffb300)';
               passEl.style.color = '#022';
-              setTimeout(() => {
-                try { this._showReadyState(); } catch (inner) {}
-              }, 800);
+              // keep yellow pending while scanning; will turn green on final pass
+              // do NOT auto-clear to READY here – that happens only after final all-passed
             }
           } catch (e) {}
 
