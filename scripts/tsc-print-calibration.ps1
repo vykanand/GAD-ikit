@@ -374,9 +374,12 @@ try {
   $partCodeX = 25
   $graphics.DrawString($partCodeText, $codeFont, $black, $partCodeX, $codeTextY)
 
-  # Draw date on the right side under barcode
-  $dateX = $widthDots - $dateSize.Width - 25
-  $graphics.DrawString($dateText, $codeFont, $black, $dateX, $codeTextY)
+  # Draw date on the right side under barcode, right-aligned to the margin
+  $dateRight = $widthDots - 40
+  $dateRect = [System.Drawing.RectangleF]::new($dateRight - 200, $codeTextY, 200, 20)
+  $stringFormat = [System.Drawing.StringFormat]::new()
+  $stringFormat.Alignment = [System.Drawing.StringAlignment]::Far
+  $graphics.DrawString($dateText, $codeFont, $black, $dateRect, $stringFormat)
 
   $document.DefaultPageSettings.Margins = [System.Drawing.Printing.Margins]::new(0, 0, 0, 0)
   $document.OriginAtMargins = $false
