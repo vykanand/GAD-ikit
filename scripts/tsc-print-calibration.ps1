@@ -369,6 +369,7 @@ $codeTextY = $barcodeY + $barHeightDots + 8
 
 # Bottom text position (12 dots below code text)
 $bottomTextY = $codeTextY + 12
+$bottomTextX = [int][Math]::Round(($widthDots - $bottomTextSize.Width) / 2, 0)
 
 try {
   # Draw title text above barcode
