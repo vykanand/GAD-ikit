@@ -282,16 +282,15 @@ try {
   $document.DefaultPageSettings.Margins = [System.Drawing.Printing.Margins]::new(0, 0, 0, 0)
   $document.OriginAtMargins = $false
   $document.PrinterSettings.Copies = 1
-  $document.PrintController = [System.Drawing.Printing.StandardPrintController]::new()
   $printHandler = [System.Drawing.Printing.PrintPageEventHandler]{
     param($sender, $eventArgs)
-    $eventArgs.Graphics.PageUnit = [System.Drawing.GraphicsUnit]::Display
+    # PageUnit.Pixel maps 1 graphics unit to 1 printer device dot, so the
+    # raster is blitted 1:1 at native 203 DPI resolution (no scaling, no
+    # bar thickening). Using Display (1/96in) here would scale the image.
+    $eventArgs.Graphics.PageUnit = [System.Drawing.GraphicsUnit]::Pixel
     $eventArgs.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
     $eventArgs.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
-    $eventArgs.Graphics.DrawImage(
-      $bitmap,
-      [System.Drawing.Rectangle]::new(0, 0, $paper.Width, $paper.Height)
-    )
+    $eventArgs.Graphics.DrawImageUnscaled($bitmap, 0, 0)
     $eventArgs.HasMorePages = $false
   }
   $document.add_PrintPage($printHandler)
