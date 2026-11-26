@@ -346,15 +346,17 @@ $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
 $graphics.Clear([System.Drawing.Color]::White)
 $black = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::Black)
 
-# Human-readable code under the barcode only
+# Human-readable text under the barcode: CustomerKitPartcode on left, date on right
 $codeFont = [System.Drawing.Font]::new('Arial', 7, [System.Drawing.FontStyle]::Bold)
-$formattedBarcode = $barcode -replace '(\d{4})(\d{4})(\d{5})', '$1-$2-$3'
-$codeTextSize = $graphics.MeasureString($formattedBarcode, $codeFont)
-$codeTextX = [int][Math]::Round(($widthDots - $codeTextSize.Width) / 2, 0)
+$partCodeText = $barcode
+$dateText = (Get-Date -Format "dd/MM/yyyy")
+
+$partCodeSize = $graphics.MeasureString($partCodeText, $codeFont)
+$dateSize = $graphics.MeasureString($dateText, $codeFont)
 
 # Reserve space for text so barcode never overlaps it.
 $textPadDots = 4
-$textBlockDots = [int][Math]::Ceiling($codeTextSize.Height) + $textPadDots
+$textBlockDots = [int][Math]::Max($partCodeSize.Height, $dateSize.Height) + $textPadDots
 
 # Barcode takes most of the label (tall bars, scannable), text small at bottom.
 $drawBarHeight = [int][Math]::Max(40, $heightDots - 2 * $outerMarginYDots - $textBlockDots)
@@ -371,8 +373,13 @@ try {
     $graphics.FillRectangle($black, $x1, $barcodeY, [Math]::Max(1, $x2 - $x1), $drawBarHeight)
   }
 
-  # Draw human-readable code under the barcode
-  $graphics.DrawString($formattedBarcode, $codeFont, $black, $codeTextX, $codeTextY)
+  # Draw CustomerKitPartcode on the left side under barcode
+  $partCodeX = $outerMarginXDots
+  $graphics.DrawString($partCodeText, $codeFont, $black, $partCodeX, $codeTextY)
+
+  # Draw date on the right side under barcode
+  $dateX = $widthDots - $dateSize.Width - $outerMarginXDots
+  $graphics.DrawString($dateText, $codeFont, $black, $dateX, $codeTextY)
 
   $document.DefaultPageSettings.Margins = [System.Drawing.Printing.Margins]::new(0, 0, 0, 0)
   $document.OriginAtMargins = $false
@@ -406,7 +413,6 @@ try {
   }
   finally {
     $document.remove_PrintPage($printHandler)
-    $codeFont.Dispose()
   }
 }
 finally {
