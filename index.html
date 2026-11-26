@@ -85,10 +85,10 @@
 
       :root {
         /* Theme variables (added for accessible contrasts) */
-        --bg: #001d4a;
-        --panel: #003366;
-        --primary: #3399ff;
-        --primary-dark: #1f4e79;
+        --bg: #1A0006;
+        --panel: #3D0013;
+        --primary: #A50034;
+        --primary-dark: #6D0022;
         --primary-contrast: #ffffff;
         --accent-yellow: #ffd54f; /* modern warm yellow */
         --accent-yellow-text: #21210a;
@@ -99,7 +99,7 @@
         --accent-green: #00c853; /* darker green for contrast */
         --accent-green-text: #000000;
         --danger: #ff4d4f; /* accessible red */
-        --muted: #cbd7e6;
+        --muted: #E4D2D8;
         --text-on-dark: #ffffff;
         --text-on-light: #000000;
       }
@@ -126,7 +126,7 @@
         flex: 1;
         margin: 0;
         padding: 20px;
-        background-color: #003366;
+        background-color: #3D0013;
         display: flex;
         flex-direction: column;
         overflow-y: auto;
@@ -188,7 +188,7 @@
       }
 
       .buttons button {
-        background-color: #3399ff;
+        background-color: #A50034;
         color: white;
         border: none;
         padding: 12px 24px;
@@ -219,7 +219,7 @@
       }
 
       .input-section {
-        background-color: #0070c0;
+        background-color: #8F002B;
         border-radius: 15px;
         padding: 20px;
         flex: 2;
@@ -249,8 +249,8 @@
       .row input {
         flex: 1;
         padding: 12px 15px;
-        background-color: #003366;
-        border: 1px solid #3399ff;
+        background-color: #3D0013;
+        border: 1px solid #A50034;
         color: white;
         font-weight: bold;
         font-size: 20px;
@@ -283,7 +283,7 @@
       }
 
       .verify-row button {
-        background-color: #1f4e79;
+        background-color: #6D0022;
         color: white;
         border: none;
         padding: 20px 30px;
@@ -313,12 +313,12 @@
       }
 
       .verify-row .value {
-        background-color: #003366;
+        background-color: #3D0013;
         padding: 20px;
         color: white;
         font-weight: bold;
         font-size: 24px;
-        border: 1px solid #3399ff;
+        border: 1px solid #A50034;
         border-radius: 6px;
         min-width: 200px;
         text-align: center;
@@ -339,7 +339,7 @@
       }
 
       .right-section {
-        background-color: #001d4a;
+        background-color: #1A0006;
         flex: 1;
         padding: 10px;
         text-align: center;
@@ -349,7 +349,7 @@
       }
 
       .right-section .info-box {
-        background-color: #0070c0;
+        background-color: #8F002B;
         margin-bottom: 10px;
         padding: 10px;
         border-radius: 5px;
@@ -364,9 +364,9 @@
         width: 120px;
         padding: 10px 12px;
         font-weight: bold;
-        background-color: #003366;
+        background-color: #3D0013;
         color: white;
-        border: 1px solid #3399ff;
+        border: 1px solid #A50034;
         border-radius: 4px;
         font-size: 20px;
         margin: 5px 0;
@@ -428,7 +428,7 @@
       }
 
       #pass-status:not(.pass-box):not(.failed) {
-        background-color: #1f4e79;
+        background-color: #6D0022;
         color: white;
         font-size: 36px;
         font-weight: bold;
@@ -578,8 +578,8 @@
         width: 100%;
         padding: 15px 20px;
         margin-bottom: 25px;
-        background-color: #001d4a;
-        border: 2px solid #3399ff;
+        background-color: #1A0006;
+        border: 2px solid #A50034;
         color: white;
         font-size: 18px;
         border-radius: 8px;
@@ -599,7 +599,7 @@
         justify-content: space-between;
         align-items: center;
         padding: 10px;
-        background-color: #0070c0;
+        background-color: #8F002B;
         margin-bottom: 10px;
         border-radius: 5px;
         cursor: pointer;
@@ -609,7 +609,7 @@
       }
 
       .part-item:hover {
-        background-color: #1f4e79;
+        background-color: #6D0022;
         transform: translateY(-2px);
         box-shadow: 0 6px 18px rgba(0, 0, 0, 0.26);
         border-left-color: var(--primary);
@@ -623,8 +623,8 @@
         padding: 20px 20px;
         background: linear-gradient(
           180deg,
-          rgba(0, 122, 204, 0.03),
-          rgba(0, 112, 192, 0.02)
+          rgba(165, 0, 52, 0.03),
+          rgba(165, 0, 52, 0.02)
         );
         color: var(--text-on-dark);
         margin-bottom: 16px;
@@ -635,14 +635,14 @@
           box-shadow 0.18s ease,
           background-color 0.12s ease;
         border: 1px solid rgba(255, 255, 255, 0.04);
-        box-shadow: 0 8px 22px rgba(3, 10, 24, 0.14);
+        box-shadow: 0 8px 22px rgba(26, 0, 6, 0.14);
       }
 
       .group-value-item:hover {
         background-color: rgba(31, 78, 121, 0.1);
         transform: translateY(-6px);
         box-shadow:
-          0 18px 48px rgba(3, 10, 24, 0.32),
+          0 18px 48px rgba(26, 0, 6, 0.32),
           0 0 18px rgba(0, 191, 165, 0.06);
       }
 
@@ -766,11 +766,11 @@
       .logs-table td {
         padding: 10px;
         text-align: left;
-        border-bottom: 1px solid #1f4e79;
+        border-bottom: 1px solid #6D0022;
       }
 
       .logs-table th {
-        background-color: #1f4e79;
+        background-color: #6D0022;
         color: #fff;
         position: sticky;
         top: 0;
@@ -785,7 +785,7 @@
       }
 
       .logs-table tr:hover td {
-        background-color: #1f4e79;
+        background-color: #6D0022;
       }
 
       .shake {
@@ -5297,7 +5297,7 @@
           addBtn.textContent = "+ Add Field";
           addBtn.style.marginTop = "8px";
           addBtn.style.padding = "8px 16px";
-          addBtn.style.backgroundColor = "#3399ff";
+          addBtn.style.backgroundColor = "#A50034";
           addBtn.style.color = "white";
           addBtn.style.border = "none";
           addBtn.style.borderRadius = "6px";
@@ -5469,7 +5469,7 @@
               <div style="color:#fff; display:block; margin-bottom:6px">Grouping Levels (ordered)</div>
               <div id="grouping-levels" style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px"></div>
               <div style="display:flex; gap:8px;">
-                <button id="add-group-level" style="padding:6px 10px; background:#3399ff; color:white; border:none; border-radius:4px; cursor:pointer">+ Add Level</button>
+                <button id="add-group-level" style="padding:6px 10px; background:#A50034; color:white; border:none; border-radius:4px; cursor:pointer">+ Add Level</button>
                 <span style="color:#fff; align-self:center; font-size:12px">Choose fields and arrange order for Level‑1 → Level‑N grouping.</span>
               </div>
             `;
@@ -6076,12 +6076,12 @@
         <div id="company-logo" class="logo">
           <img
             id="logo-img"
-            src="https://gadglobal.co.in/wp-content/uploads/2020/10/1WhatsApp-Image-2020-10-09-at-12.38.18-PM-e1602228066541.jpeg"
+            src="GAD.png"
             alt="GAD Logo"
           />
           <span id="logo-text" class="logo-text">GAD</span>
         </div>
-        <h1 id="page-title">GAD Ikit Barcode System</h1>
+        <h1 id="page-title">GAD - LG AC Assembly Kit Generator</h1>
         <nav id="nav-buttons" class="buttons">
           <button id="btn-master">Master</button>
           <button id="btn-history">History</button>
@@ -6338,7 +6338,7 @@
               margin-top: 10px;
               padding: 10px 12px;
               border-radius: 12px;
-              background: #00264d;
+              background: #2A000D;
               color: #fff;
               border: 1px solid rgba(255, 255, 255, 0.12);
               font-size: 13px;
@@ -6391,7 +6391,7 @@
             <div
               id="hidden-headers-list"
               style="
-                background: #00264d;
+                background: #2A000D;
                 padding: 8px;
                 border-radius: 6px;
                 max-height: 160px;
@@ -6481,7 +6481,7 @@
             <button
               id="refresh-settings"
               style="
-                background: #1f4e79;
+                background: #6D0022;
                 padding: 8px 16px;
                 border-radius: 6px;
                 border: none;
@@ -6547,7 +6547,7 @@
               style="
                 padding: 10px 30px;
                 font-size: 16px;
-                background-color: #0056b3;
+                background-color: #7D0028;
                 color: #fff;
                 border: none;
                 border-radius: 4px;

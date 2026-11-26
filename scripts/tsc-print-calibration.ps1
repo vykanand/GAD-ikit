@@ -346,13 +346,44 @@ $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
 $graphics.Clear([System.Drawing.Color]::White)
 $black = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::Black)
 
+# Text rendering settings for crisp labels
+$fontTop = [System.Drawing.Font]::new('Arial', 10, [System.Drawing.FontStyle]::Bold)
+$fontBottom = [System.Drawing.Font]::new('Arial', 8, [System.Drawing.FontStyle]::Regular)
+$topText = "GAD"
+$bottomText = "LG AC Assembly Kit"
+
+# Measure and position the top text (centered above barcode)
+$topTextSize = $graphics.MeasureString($topText, $fontTop)
+$topTextX = [int][Math]::Round(($widthDots - $topTextSize.Width) / 2, 0)
+$topTextY = [int][Math]::Max(2, $top - [int][Math]::Ceiling($topTextSize.Height))
+
+# Measure and position the bottom text (centered below barcode)
+$bottomTextSize = $graphics.MeasureString($bottomText, $fontBottom)
+$bottomTextX = [int][Math]::Round(($widthDots - $bottomTextSize.Width) / 2, 0)
+$bottomTextY = $top + $barHeightDots + 12
+
 try {
+  # Draw title text above barcode
+  $graphics.DrawString($topText, $fontTop, $black, $topTextX, $topTextY)
+
+  # Draw barcode pattern
   for ($module = 0; $module -lt $pattern.Length; $module++) {
     if ($pattern[$module] -ne '1') { continue }
     $x1 = $left + [int][Math]::Round(($quietZoneModules + $module) * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
     $x2 = $left + [int][Math]::Round(($quietZoneModules + $module + 1) * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
     $graphics.FillRectangle($black, $x1, $top, [Math]::Max(1, $x2 - $x1), $barHeightDots)
   }
+
+  # Draw part number text below barcode (formatted barcode as XXX-XXXX-XXXXX)
+  $formattedBarcode = $barcode -replace '(\d{4})(\d{4})(\d{5})', '$1-$2-$3'
+  $barcodeFont = [System.Drawing.Font]::new('Arial', 9, [System.Drawing.FontStyle]::Regular)
+  $barcodeSize = $graphics.MeasureString($formattedBarcode, $barcodeFont)
+  $barcodeTextX = [int][Math]::Round(($widthDots - $barcodeSize.Width) / 2, 0)
+  $barcodeTextY = $bottomTextY + [int][Math]::Ceiling($bottomTextSize.Height)
+  $graphics.DrawString($formattedBarcode, $barcodeFont, $black, $barcodeTextX, $barcodeTextY)
+
+  # Draw descriptive text at the very bottom
+  $graphics.DrawString($bottomText, $fontBottom, $black, $bottomTextX, $barcodeTextY + 10)
 
   $document.DefaultPageSettings.Margins = [System.Drawing.Printing.Margins]::new(0, 0, 0, 0)
   $document.OriginAtMargins = $false
@@ -386,9 +417,12 @@ try {
   }
   finally {
     $document.remove_PrintPage($printHandler)
+    $barcodeFont.Dispose()
   }
 }
 finally {
+  $fontTop.Dispose()
+  $fontBottom.Dispose()
   $black.Dispose()
   $graphics.Dispose()
   $bitmap.Dispose()
