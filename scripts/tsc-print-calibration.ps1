@@ -335,104 +335,63 @@ if ($SaveApproved) {
 }
 
 $barcode = $Barcode
-$bitmap = [System.Drawing.Bitmap]::new(
-  $widthDots,
-  $heightDots,
-  [System.Drawing.Imaging.PixelFormat]::Format24bppRgb
-)
-$bitmap.SetResolution([single]$resolution.X, [single]$resolution.Y)
-$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-$graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
-$graphics.Clear([System.Drawing.Color]::White)
-$black = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::Black)
 
-# Text rendering settings for crisp labels
-$fontTop = [System.Drawing.Font]::new('Arial', 10, [System.Drawing.FontStyle]::Bold)
-$fontBottom = [System.Drawing.Font]::new('Arial', 8, [System.Drawing.FontStyle]::Regular)
-$topText = "GAD"
-$bottomText = "LG AC Assembly Kit"
+# Build a native TSC TSPL .PRN file instead of a bitmap image.
+# Native BARCODE command draws mathematically exact bars aligned to
+# the printhead dots — no dithering, no scaling, no blur at 203 DPI.
+# Text via built-in printer fonts stays crisp and tiny text stays readable.
+$labelWidthMm = $paper.Width * 0.254
+$labelHeightMm = $paper.Height * 0.254
+$barcodeYmm = 4
+$barcodeHeightMm = 24
+$barcodeModuleMm = 0.375
+$barcodeXmm = [int][Math]::Round(($labelWidthMm - ($pattern.Length + $quietZoneModules * 2) * $barcodeModuleMm) / 2, 1)
+$codeTextYmm = $barcodeYmm + $barcodeHeightMm + 2
 
-# Measure text sizes for proper vertical spacing
-$topTextSize = $graphics.MeasureString($topText, $fontTop)
-$bottomTextSize = $graphics.MeasureString($bottomText, $fontBottom)
+# Format code as XXX-XXXX-XXXXX for human readability
+$formattedBarcode = $barcode -replace '(\d{4})(\d{4})(\d{5})', '$1-$2-$3'
 
-# Calculate vertical layout: topText -> barcode -> formattedCode -> bottomText
-# Top text sits 4 pixels below the top margin
-$topTextY = [int][Math]::Max(2, 4)
-$topTextX = [int][Math]::Round(($widthDots - $topTextSize.Width) / 2, 0)
+$prnLines = @()
+$prnLines += "SIZE $labelWidthMm mm $labelHeightMm mm"
+$prnLines += "GAP 0 mm 0 mm"
+$prnLines += "CLS"
+$prnLines += "DIRECTION 0,0"
+$prnLines += "REFERENCE 0,0"
+$prnLines += "OFFSET 0 mm 0 mm"
+if ($DarknessLevel -ge 0) {
+  $prnLines += "DENSITY $DarknessLevel"
+}
+# Native Code 128 barcode (bars drawn by the printer, not rasterized)
+$prnLines += "BARCODE $barcodeXmm mm $barcodeYmm mm 128 $barcodeHeightMm mm 1 0 2 $barcode"
+# Human-readable code under the bars (built-in font, sharp at any size)
+$textWidthMm = [int][Math]::Ceiling($formattedBarcode.Length * 2.5)
+$textXmm = [int][Math]::Round(($labelWidthMm - $textWidthMm) / 2, 1)
+$prnLines += "TEXT $textXmm mm $codeTextYmm mm `"2`" 0 1 1 $formattedBarcode"
+$prnLines += "PRINT 1"
 
-# Barcode Y position (centered vertically with space for top text)
-$barcodeY = [int][Math]::Max($topTextY - [int][Math]::Ceiling($topTextSize.Height), $top)
-
-# Space between barcode and code text: 8 dots
-$codeTextY = $barcodeY + $barHeightDots + 8
-
-# Bottom text position (12 dots below code text)
-$bottomTextY = $codeTextY + 12
-$bottomTextX = [int][Math]::Round(($widthDots - $bottomTextSize.Width) / 2, 0)
+$prnContent = ($prnLines -join "`r`n") + "`r`n"
+$prnPath = Join-Path $env:TEMP "gad-print-$barcode.prn"
+[System.IO.File]::WriteAllText($prnPath, $prnContent, [System.Text.UTF8Encoding]::new($false))
 
 try {
-  # Draw title text above barcode
-  $graphics.DrawString($topText, $fontTop, $black, $topTextX, $topTextY)
-
-  # Draw barcode pattern
-  for ($module = 0; $module -lt $pattern.Length; $module++) {
-    if ($pattern[$module] -ne '1') { continue }
-    $x1 = $left + [int][Math]::Round(($quietZoneModules + $module) * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
-    $x2 = $left + [int][Math]::Round(($quietZoneModules + $module + 1) * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
-    $graphics.FillRectangle($black, $x1, $barcodeY, [Math]::Max(1, $x2 - $x1), $barHeightDots)
+  if (-not $Print) {
+    throw 'Add -Print to submit exactly one label.'
   }
-
-  # Draw part number text below barcode (formatted barcode as XXX-XXXX-XXXXX)
-  $formattedBarcode = $barcode -replace '(\d{4})(\d{4})(\d{5})', '$1-$2-$3'
-  $barcodeFont = [System.Drawing.Font]::new('Arial', 9, [System.Drawing.FontStyle]::Regular)
-  $barcodeSize = $graphics.MeasureString($formattedBarcode, $barcodeFont)
-  $barcodeTextX = [int][Math]::Round(($widthDots - $barcodeSize.Width) / 2, 0)
-  $graphics.DrawString($formattedBarcode, $barcodeFont, $black, $barcodeTextX, $codeTextY)
-
-  # Draw descriptive text at the very bottom
-  $graphics.DrawString($bottomText, $fontBottom, $black, $bottomTextX, $bottomTextY)
-
-  $document.DefaultPageSettings.Margins = [System.Drawing.Printing.Margins]::new(0, 0, 0, 0)
-  $document.OriginAtMargins = $false
-  $document.PrinterSettings.Copies = 1
-  $printHandler = [System.Drawing.Printing.PrintPageEventHandler]{
-    param($sender, $eventArgs)
-    # PageUnit.Pixel maps 1 graphics unit to 1 printer device dot, so the
-    # raster is blitted 1:1 at native 203 DPI resolution (no scaling, no
-    # bar thickening). Using Display (1/96in) here would scale the image.
-    $eventArgs.Graphics.PageUnit = [System.Drawing.GraphicsUnit]::Pixel
-    $eventArgs.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
-    $eventArgs.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
-    $eventArgs.Graphics.DrawImageUnscaled($bitmap, 0, 0)
-    $eventArgs.HasMorePages = $false
+  if ($DarknessLevel -ge 0) {
+    Set-TscDarkness -Name $PrinterName -Level $DarknessLevel
   }
-  $document.add_PrintPage($printHandler)
-  try {
-    if (-not $Print) {
-      throw 'Add -Print to submit exactly one label.'
-    }
-    if ($DarknessLevel -ge 0) {
-      Set-TscDarkness -Name $PrinterName -Level $DarknessLevel
-    }
-    Write-Host "Printer: $PrinterName"
-    Write-Host "Media: $($paper.PaperName), $($paper.Width * 0.254) x $($paper.Height * 0.254) mm, $($resolution.X) x $($resolution.Y) dpi"
-    Write-Host "Barcode: $barcode | Code 128 | module width: $([Math]::Round($effectiveModuleDots, 2)) dots | bar height: $barHeightDots dots"
-    Write-Host 'Submitting exactly one test label...'
-    $document.Print()
-    Write-Host 'One label submitted. Review it, then use the feedback in chat before printing another.'
-    Write-Host 'To save a user-approved result, rerun with the same settings and -SaveApproved (no print will be sent).'
-  }
-  finally {
-    $document.remove_PrintPage($printHandler)
-    $barcodeFont.Dispose()
-  }
+  # Send raw TSPL commands directly to the printer queue
+  Start-Process -FilePath "cmd.exe" -ArgumentList "/c copy /B `"$prnPath`" `"`\\$PrinterName`"" -Wait -NoNewWindow -ErrorAction Stop
+  Write-Host "Printer: $PrinterName"
+  Write-Host "Media: $($paper.PaperName), $($paper.Width * 0.254) x $($paper.Height * 0.254) mm, $($resolution.X) x $($resolution.Y) dpi"
+  Write-Host "Barcode: $barcode | Code 128 | module width: $([Math]::Round($effectiveModuleDots, 2)) dots | bar height: $barHeightDots dots"
+  Write-Host "PRN file: $prnPath"
+  Write-Host 'One label submitted. Review it, then use the feedback in chat before printing another.'
+  Write-Host 'To save a user-approved result, rerun with the same settings and -SaveApproved (no print will be sent).'
+}
+catch {
+  throw
 }
 finally {
-  $fontTop.Dispose()
-  $fontBottom.Dispose()
-  $black.Dispose()
-  $graphics.Dispose()
-  $bitmap.Dispose()
   $document.Dispose()
 }
