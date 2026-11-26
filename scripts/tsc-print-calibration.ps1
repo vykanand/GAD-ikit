@@ -370,11 +370,11 @@ try {
   }
 
   # Draw CustomerKitPartcode on the left side under barcode
-  $partCodeX = $outerMarginXDots
+  $partCodeX = 15
   $graphics.DrawString($partCodeText, $codeFont, $black, $partCodeX, $codeTextY)
 
   # Draw date on the right side under barcode
-  $dateX = $widthDots - $dateSize.Width - $outerMarginXDots
+  $dateX = $widthDots - $dateSize.Width - 15
   $graphics.DrawString($dateText, $codeFont, $black, $dateX, $codeTextY)
 
   $document.DefaultPageSettings.Margins = [System.Drawing.Printing.Margins]::new(0, 0, 0, 0)
