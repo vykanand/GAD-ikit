@@ -373,6 +373,76 @@ $prnContent = ($prnLines -join "`r`n") + "`r`n"
 $prnPath = Join-Path $env:TEMP "gad-print-$barcode.prn"
 [System.IO.File]::WriteAllText($prnPath, $prnContent, [System.Text.UTF8Encoding]::new($false))
 
+# Win32 raw printer API for sending TSPL commands directly to the spooler
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.ComponentModel;
+
+public class RawPrinter
+{
+  [DllImport("winspool.Drv", EntryPoint = "OpenPrinterW", SetLastError = true, CharSet = CharSet.Unicode)]
+  public static extern bool OpenPrinter(string pPrinterName, out IntPtr phPrinter, IntPtr pDefault);
+
+  [DllImport("winspool.Drv", EntryPoint = "StartDocPrinterW", SetLastError = true, CharSet = CharSet.Unicode)]
+  public static extern bool StartDocPrinter(IntPtr hPrinter, int level, ref DOCINFO di);
+
+  [DllImport("winspool.Drv", EntryPoint = "StartPagePrinter", SetLastError = true)]
+  public static extern bool StartPagePrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", EntryPoint = "WritePrinter", SetLastError = true)]
+  public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);
+
+  [DllImport("winspool.Drv", EntryPoint = "EndPagePrinter", SetLastError = true)]
+  public static extern bool EndPagePrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", EntryPoint = "EndDocPrinter", SetLastError = true)]
+  public static extern bool EndDocPrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", EntryPoint = "ClosePrinter", SetLastError = true)]
+  public static extern bool ClosePrinter(IntPtr hPrinter);
+
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct DOCINFO { public string pDocName; public string pOutputFile; public string pDataType; }
+
+  public static void SendRaw(string printerName, string docName, byte[] data)
+  {
+    IntPtr hPrinter = IntPtr.Zero;
+    if (!OpenPrinter(printerName, out hPrinter, IntPtr.Zero))
+      throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenPrinter failed");
+
+    try
+    {
+      var di = new DOCINFO { pDocName = docName, pOutputFile = null, pDataType = "RAW" };
+      if (!StartDocPrinter(hPrinter, 1, ref di))
+        throw new Win32Exception(Marshal.GetLastWin32Error(), "StartDocPrinter failed");
+
+      try
+      {
+        if (!StartPagePrinter(hPrinter))
+          throw new Win32Exception(Marshal.GetLastWin32Error(), "StartPagePrinter failed");
+
+        try
+        {
+          IntPtr ptr = Marshal.AllocHGlobal(data.Length);
+          try
+          {
+            Marshal.Copy(data, 0, ptr, data.Length);
+            int written;
+            if (!WritePrinter(hPrinter, ptr, data.Length, out written))
+              throw new Win32Exception(Marshal.GetLastWin32Error(), "WritePrinter failed");
+          }
+          finally { Marshal.FreeHGlobal(ptr); }
+        }
+        finally { EndPagePrinter(hPrinter); }
+      }
+      finally { EndDocPrinter(hPrinter); }
+    }
+    finally { ClosePrinter(hPrinter); }
+  }
+}
+"@
+
 try {
   if (-not $Print) {
     throw 'Add -Print to submit exactly one label.'
@@ -380,15 +450,15 @@ try {
   if ($DarknessLevel -ge 0) {
     Set-TscDarkness -Name $PrinterName -Level $DarknessLevel
   }
-  # Send raw TSPL commands directly to the printer queue
-  Start-Process -FilePath "cmd.exe" -ArgumentList "/c copy /B `"$prnPath`" `"`\\$PrinterName`"" -Wait -NoNewWindow -ErrorAction Stop
+  # Send raw TSPL commands directly to the printer spooler via Win32 API
+  $prnBytes = [System.IO.File]::ReadAllBytes($prnPath)
+  [RawPrinter]::SendRaw($PrinterName, "GAD Label - $barcode", $prnBytes)
   Write-Host "Printer: $PrinterName"
   Write-Host "Media: $($paper.PaperName), $($paper.Width * 0.254) x $($paper.Height * 0.254) mm, $($resolution.X) x $($resolution.Y) dpi"
   Write-Host "Barcode: $barcode | Code 128 | module width: $([Math]::Round($effectiveModuleDots, 2)) dots | bar height: $barHeightDots dots"
   Write-Host "PRN file: $prnPath"
   Write-Host 'One label submitted. Review it, then use the feedback in chat before printing another.'
-  Write-Host 'To save a user-approved result, rerun with the same settings and -SaveApproved (no print will be sent).'
-}
+  Write-Host 'To save a user-approved result, rerun with the same settings and -SaveApproved (no print will be sent).'}
 catch {
   throw
 }
