@@ -90,15 +90,39 @@ function Get-Code128Pattern([string]$Code) {
     '10111101110', '11101011110', '11110101110', '11010000100', '11010010000',
     '11010011100', '1100011101011'
   )
-  if (-not (Test-PayloadCheckDigit $Code)) { throw 'Barcode must be a valid 13-digit numeric code with a correct check digit.' }
+  if ($Code -match '^\d{13}$') {
+    if (-not (Test-PayloadCheckDigit $Code)) { throw 'Barcode must be a valid 13-digit numeric code with a correct check digit.' }
+
+    $codewords = [System.Collections.Generic.List[int]]::new()
+    $codewords.Add(104)
+    $codewords.Add([int]::Parse($Code[0].ToString()) + 16)
+    $codewords.Add(99)
+    for ($index = 1; $index -lt $Code.Length; $index += 2) {
+      $codewords.Add([int]::Parse($Code.Substring($index, 2)))
+    }
+    $checksum = $codewords[0]
+    for ($index = 1; $index -lt $codewords.Count; $index++) {
+      $checksum += $codewords[$index] * $index
+    }
+    $checksum %= 103
+    $pattern = ''
+    foreach ($codeword in $codewords) { $pattern += $patterns[$codeword] }
+    return $pattern + $patterns[$checksum] + $patterns[106]
+  }
+
+  # Code 128 Set B for printable ASCII payloads (e.g. part codes like EAD64745024).
+  if ([string]::IsNullOrEmpty($Code)) { throw 'Barcode payload must not be empty.' }
+  if ($Code.Length -gt 80) { throw 'Barcode payload is too long for Code 128.' }
+  $bytes = [System.Text.Encoding]::ASCII.GetBytes($Code)
+  foreach ($byte in $bytes) {
+    if ($byte -lt 32 -or $byte -gt 126) {
+      throw 'Barcode payload must contain printable ASCII characters only.'
+    }
+  }
 
   $codewords = [System.Collections.Generic.List[int]]::new()
   $codewords.Add(104)
-  $codewords.Add([int]::Parse($Code[0].ToString()) + 16)
-  $codewords.Add(99)
-  for ($index = 1; $index -lt $Code.Length; $index += 2) {
-    $codewords.Add([int]::Parse($Code.Substring($index, 2)))
-  }
+  foreach ($byte in $bytes) { $codewords.Add([int]$byte - 32) }
   $checksum = $codewords[0]
   for ($index = 1; $index -lt $codewords.Count; $index++) {
     $checksum += $codewords[$index] * $index
@@ -210,13 +234,17 @@ $pattern = $expectedPattern
 $totalModules = $pattern.Length + $quietZoneModules * 2
 $maxModuleDots = [Math]::Min(5.0, ($widthDots - 2 * $outerMarginXDots) / $totalModules)
 $effectiveModuleDots = if ($AutoFit) { $maxModuleDots } else { [Math]::Min($ModuleDots, $maxModuleDots) }
-if ($effectiveModuleDots -lt 3) { throw 'The detected label is too narrow for a reliably scannable Code 128 barcode.' }
+if ($effectiveModuleDots -lt 2) { throw 'The detected label is too narrow for a reliably scannable Code 128 barcode.' }
+if ($effectiveModuleDots -lt 3) {
+  Write-Warning ("Module width {0:N2} dots is below the 3-dot preference because the payload is long for this label. The raster is still blitted 1:1 at 203 DPI." -f $effectiveModuleDots)
+}
 
 $barHeightDots = [int][Math]::Floor(($heightDots - 2 * $outerMarginYDots) * $BarHeightPercent / 100.0)
-$left = [int][Math]::Round(($widthDots - $totalModules * $effectiveModuleDots) / 2.0 + $OffsetXmm * $resolution.X / 25.4, [MidpointRounding]::AwayFromZero)
+$blockWidthDots = [int][Math]::Round($totalModules * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
+$left = [int][Math]::Round(($widthDots - $blockWidthDots) / 2.0 + $OffsetXmm * $resolution.X / 25.4, [MidpointRounding]::AwayFromZero)
 $top = [int][Math]::Round(($heightDots - $barHeightDots) / 2.0 + $OffsetYmm * $resolution.Y / 25.4, [MidpointRounding]::AwayFromZero)
 if ($left -lt $outerMarginXDots -or $top -lt $outerMarginYDots -or
-    ($left + $totalModules * $effectiveModuleDots) -gt ($widthDots - $outerMarginXDots) -or
+    ($left + $blockWidthDots) -gt ($widthDots - $outerMarginXDots) -or
     ($top + $barHeightDots) -gt ($heightDots - $outerMarginYDots)) {
   throw 'Barcode does not fit the active label with these settings.'
 }

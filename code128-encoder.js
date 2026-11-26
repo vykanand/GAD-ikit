@@ -30,8 +30,11 @@
     '11010011100', '1100011101011',
   ];
 
-  function isValidPayload(value) {
-    if (!/^\d{13}$/.test(value)) return false;
+  function isNumericPayload(value) {
+    return typeof value === 'string' && /^\d{13}$/.test(value);
+  }
+
+  function isValidLuhn(value) {
     let sum = 0;
     let multiplyByThree = true;
     for (let index = 11; index >= 0; index -= 1) {
@@ -43,27 +46,67 @@
     return (10 - (sum % 10)) % 10 === Number(value[12]);
   }
 
-  function encode(value) {
-    if (!isValidPayload(value)) {
-      throw new Error('Barcode value must be a valid 13-digit numeric code.');
+  function isCode128BPayload(value) {
+    if (typeof value !== 'string' || value.length === 0 || value.length > 80) {
+      return false;
     }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      if (code < 32 || code > 126) return false;
+    }
+    return true;
+  }
 
+  function isValidPayload(value) {
+    if (isNumericPayload(value)) return isValidLuhn(value);
+    return isCode128BPayload(value);
+  }
+
+  function checksumFor(codewords) {
+    return codewords.reduce(
+      (sum, codeword, index) => sum + codeword * (index === 0 ? 1 : index),
+      0,
+    ) % 103;
+  }
+
+  // Code Set C fast path for 13-digit numeric payloads. Output is unchanged
+  // byte-for-byte from the original numeric-only encoder.
+  function encodeNumeric(value) {
     const codewords = [104, Number(value[0]) + 16, 99];
     for (let index = 1; index < value.length; index += 2) {
       codewords.push(Number(value.slice(index, index + 2)));
     }
-
-    const checksum = codewords.reduce(
-      (sum, codeword, index) => sum + codeword * (index === 0 ? 1 : index),
-      0,
-    ) % 103;
-    const encoded = [...codewords, checksum, 106]
+    const encoded = [...codewords, checksumFor(codewords), 106]
       .map((codeword) => patterns[codeword])
       .join('');
     if (encoded.length !== 123 || /[^01]/.test(encoded)) {
       throw new Error('Code 128 encoder produced an invalid pattern.');
     }
     return encoded;
+  }
+
+  // Code Set B for printable ASCII (part codes such as EAD64745024).
+  function encodeSetB(value) {
+    const codewords = [104];
+    for (let index = 0; index < value.length; index += 1) {
+      codewords.push(value.charCodeAt(index) - 32);
+    }
+    const encoded = [...codewords, checksumFor(codewords), 106]
+      .map((codeword) => patterns[codeword])
+      .join('');
+    if (/[^01]/.test(encoded)) {
+      throw new Error('Code 128 encoder produced an invalid pattern.');
+    }
+    return encoded;
+  }
+
+  function encode(value) {
+    if (!isValidPayload(value)) {
+      throw new Error(
+        'Barcode value must be a valid 13-digit numeric code or printable ASCII text.',
+      );
+    }
+    return isNumericPayload(value) ? encodeNumeric(value) : encodeSetB(value);
   }
 
   return { encode, isValidPayload };
