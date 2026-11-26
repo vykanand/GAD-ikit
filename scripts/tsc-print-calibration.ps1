@@ -352,15 +352,23 @@ $fontBottom = [System.Drawing.Font]::new('Arial', 8, [System.Drawing.FontStyle]:
 $topText = "GAD"
 $bottomText = "LG AC Assembly Kit"
 
-# Measure and position the top text (centered above barcode)
+# Measure text sizes for proper vertical spacing
 $topTextSize = $graphics.MeasureString($topText, $fontTop)
-$topTextX = [int][Math]::Round(($widthDots - $topTextSize.Width) / 2, 0)
-$topTextY = [int][Math]::Max(2, $top - [int][Math]::Ceiling($topTextSize.Height))
-
-# Measure and position the bottom text (centered below barcode)
 $bottomTextSize = $graphics.MeasureString($bottomText, $fontBottom)
-$bottomTextX = [int][Math]::Round(($widthDots - $bottomTextSize.Width) / 2, 0)
-$bottomTextY = $top + $barHeightDots + 12
+
+# Calculate vertical layout: topText -> barcode -> formattedCode -> bottomText
+# Top text sits 4 pixels below the top margin
+$topTextY = [int][Math]::Max(2, 4)
+$topTextX = [int][Math]::Round(($widthDots - $topTextSize.Width) / 2, 0)
+
+# Barcode Y position (centered vertically with space for top text)
+$barcodeY = [int][Math]::Max($topTextY - [int][Math]::Ceiling($topTextSize.Height), $top)
+
+# Space between barcode and code text: 8 dots
+$codeTextY = $barcodeY + $barHeightDots + 8
+
+# Bottom text position (12 dots below code text)
+$bottomTextY = $codeTextY + 12
 
 try {
   # Draw title text above barcode
@@ -371,7 +379,7 @@ try {
     if ($pattern[$module] -ne '1') { continue }
     $x1 = $left + [int][Math]::Round(($quietZoneModules + $module) * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
     $x2 = $left + [int][Math]::Round(($quietZoneModules + $module + 1) * $effectiveModuleDots, [MidpointRounding]::AwayFromZero)
-    $graphics.FillRectangle($black, $x1, $top, [Math]::Max(1, $x2 - $x1), $barHeightDots)
+    $graphics.FillRectangle($black, $x1, $barcodeY, [Math]::Max(1, $x2 - $x1), $barHeightDots)
   }
 
   # Draw part number text below barcode (formatted barcode as XXX-XXXX-XXXXX)
@@ -379,11 +387,10 @@ try {
   $barcodeFont = [System.Drawing.Font]::new('Arial', 9, [System.Drawing.FontStyle]::Regular)
   $barcodeSize = $graphics.MeasureString($formattedBarcode, $barcodeFont)
   $barcodeTextX = [int][Math]::Round(($widthDots - $barcodeSize.Width) / 2, 0)
-  $barcodeTextY = $bottomTextY + [int][Math]::Ceiling($bottomTextSize.Height)
-  $graphics.DrawString($formattedBarcode, $barcodeFont, $black, $barcodeTextX, $barcodeTextY)
+  $graphics.DrawString($formattedBarcode, $barcodeFont, $black, $barcodeTextX, $codeTextY)
 
   # Draw descriptive text at the very bottom
-  $graphics.DrawString($bottomText, $fontBottom, $black, $bottomTextX, $barcodeTextY + 10)
+  $graphics.DrawString($bottomText, $fontBottom, $black, $bottomTextX, $bottomTextY)
 
   $document.DefaultPageSettings.Margins = [System.Drawing.Printing.Margins]::new(0, 0, 0, 0)
   $document.OriginAtMargins = $false
